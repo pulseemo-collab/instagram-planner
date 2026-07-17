@@ -1,0 +1,412 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import { CircleCheck, Grid3x3, LinkIcon, MessageSquare, Undo2 } from "lucide-react";
+import { InstagramProfile } from "@/components/instagram/instagram-profile";
+import { InstagramPostDetail } from "@/components/instagram/post-detail";
+import { Button } from "@/components/ui/button";
+import { TextAreaField, TextField } from "@/components/ui/field";
+import { ToastProvider, useToast } from "@/components/ui/toast";
+import { buildIgPostDetail } from "@/lib/instagram/map-post";
+import { buildIgProfile } from "@/lib/instagram/map-profile";
+import { getRepository, isShareError } from "@/lib/repositories";
+import type { ShareError, ShareResolution } from "@/lib/repositories/types";
+import { APPROVAL_STATUS_LABELS, type ClientBundle } from "@/types/domain";
+
+const REVIEWER_KEY = "gridline-reviewer";
+
+interface Reviewer {
+  name: string;
+  email: string;
+}
+
+function loadReviewer(): Reviewer {
+  try {
+    const raw = localStorage.getItem(REVIEWER_KEY);
+    if (raw) return JSON.parse(raw) as Reviewer;
+  } catch {
+    // fall through
+  }
+  return { name: "", email: "" };
+}
+
+const shareErrorCopy: Record<ShareError, { title: string; body: string }> = {
+  not_found: {
+    title: "Preview not found",
+    body: "This link doesn't match any preview. Double-check the URL with whoever sent it.",
+  },
+  inactive: {
+    title: "Preview disabled",
+    body: "The creator has turned this preview link off. Ask them for a fresh link.",
+  },
+  expired: {
+    title: "Preview expired",
+    body: "This link has passed its expiration date. Ask the creator for a new one.",
+  },
+};
+
+function validateReviewer(reviewer: Reviewer): string | null {
+  if (!reviewer.name.trim() || reviewer.name.trim().length < 2) return "Please enter your name.";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reviewer.email)) return "Please enter a valid email.";
+  return null;
+}
+
+function SharePageInner() {
+  const params = useParams<{ shareToken: string }>();
+  const { toast } = useToast();
+
+  const [resolution, setResolution] = useState<ShareResolution | ShareError | null>(null);
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
+  const [reviewer, setReviewer] = useState<Reviewer>(() =>
+    typeof window === "undefined" ? { name: "", email: "" } : loadReviewer(),
+  );
+  const [feedback, setFeedback] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const repo = await getRepository();
+      const result = await repo.resolveShareToken(params.shareToken);
+      if (cancelled) return;
+      if (!isShareError(result)) {
+        // Resolve demo-mode local: media references for display.
+        const bundle = result.bundle;
+        const resolve = async (url: string | null) =>
+          url && url.startsWith("local:") ? repo.resolveMediaUrl(url) : url;
+        bundle.client.avatarUrl = await resolve(bundle.client.avatarUrl);
+        await Promise.all([
+          ...bundle.highlights.map(async (h) => {
+            h.coverUrl = await resolve(h.coverUrl);
+          }),
+          ...bundle.media.map(async (m) => {
+            m.url = (await resolve(m.url)) ?? m.url;
+            m.thumbnailUrl = await resolve(m.thumbnailUrl);
+          }),
+        ]);
+      }
+      setResolution(result);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.shareToken]);
+
+  const bundle: ClientBundle | null =
+    resolution && !isShareError(resolution) ? resolution.bundle : null;
+
+  const igProfile = useMemo(() => {
+    if (!bundle) return null;
+    return buildIgProfile(bundle.client, bundle.highlights, bundle.posts, bundle.media);
+  }, [bundle]);
+
+  const openPost = bundle?.posts.find((p) => p.id === openPostId) ?? null;
+  const openPostDetail = useMemo(() => {
+    if (!bundle || !openPost) return null;
+    return buildIgPostDetail(
+      bundle.client,
+      openPost,
+      bundle.media,
+      bundle.comments.filter((c) => c.postId === openPost.id),
+    );
+  }, [bundle, openPost]);
+
+  if (resolution === null) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center" role="status" aria-label="Loading preview">
+        <span className="size-6 animate-spin rounded-full border-2 border-line-strong border-t-ink" />
+      </div>
+    );
+  }
+
+  if (isShareError(resolution)) {
+    const copy = shareErrorCopy[resolution];
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+        <span className="flex size-12 items-center justify-center rounded-2xl border border-line bg-panel text-ink-faint shadow-panel">
+          <LinkIcon className="size-5" aria-hidden="true" />
+        </span>
+        <h1 className="mt-4 text-lg font-semibold tracking-tight text-ink">{copy.title}</h1>
+        <p className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">{copy.body}</p>
+      </div>
+    );
+  }
+
+  const { shareLink } = resolution;
+  const client = bundle!.client;
+
+  function persistReviewer(): boolean {
+    const error = validateReviewer(reviewer);
+    setFormError(error);
+    if (error) return false;
+    localStorage.setItem(REVIEWER_KEY, JSON.stringify(reviewer));
+    return true;
+  }
+
+  async function refreshBundle() {
+    const repo = await getRepository();
+    const result = await repo.resolveShareToken(params.shareToken);
+    if (!isShareError(result)) setResolution(result);
+  }
+
+  async function submitDecision(status: "approved" | "changes_requested", postId: string, message: string | null) {
+    if (!persistReviewer()) return;
+    setBusy(true);
+    try {
+      const repo = await getRepository();
+      const result = await repo.submitPublicApproval(params.shareToken, {
+        postId,
+        reviewerName: reviewer.name.trim(),
+        reviewerEmail: reviewer.email.trim(),
+        status,
+        message,
+      });
+      if (isShareError(result)) {
+        toast("This link no longer accepts approvals", "error");
+        return;
+      }
+      if (message) {
+        await repo.submitPublicComment(params.shareToken, {
+          postId,
+          authorName: reviewer.name.trim(),
+          authorEmail: reviewer.email.trim(),
+          body: message,
+          commentType: status === "changes_requested" ? "change_request" : "general",
+        });
+      }
+      await refreshBundle();
+      toast(status === "approved" ? "Post approved" : "Change request sent");
+      setFeedback("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitComment(postId: string, body: string) {
+    if (!persistReviewer()) return;
+    if (!body.trim() || body.trim().length < 2) {
+      setFormError("Write a short message first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const repo = await getRepository();
+      const result = await repo.submitPublicComment(params.shareToken, {
+        postId,
+        authorName: reviewer.name.trim(),
+        authorEmail: reviewer.email.trim(),
+        body: body.trim().slice(0, 2000),
+        commentType: "general",
+      });
+      if (isShareError(result)) {
+        toast("This link no longer accepts comments", "error");
+        return;
+      }
+      await refreshBundle();
+      toast("Comment sent");
+      setFeedback("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveAllPending() {
+    if (!persistReviewer()) return;
+    const pending = bundle!.posts.filter(
+      (p) => p.approvalStatus === "awaiting_approval" || p.approvalStatus === "not_sent",
+    );
+    if (pending.length === 0) {
+      toast("Nothing waiting for approval", "info");
+      return;
+    }
+    setBusy(true);
+    try {
+      const repo = await getRepository();
+      for (const post of pending) {
+        await repo.submitPublicApproval(params.shareToken, {
+          postId: post.id,
+          reviewerName: reviewer.name.trim(),
+          reviewerEmail: reviewer.email.trim(),
+          status: "approved",
+          message: null,
+        });
+      }
+      await refreshBundle();
+      toast(`${pending.length} posts approved`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const pendingCount = bundle!.posts.filter((p) => p.approvalStatus === "awaiting_approval").length;
+
+  return (
+    <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 py-6 sm:px-6">
+      <header className="mb-6 text-center">
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-ink-faint">
+          Content preview
+        </p>
+        <h1 className="mt-1 text-xl font-semibold tracking-tight text-ink">{client.name}</h1>
+        <p className="mt-0.5 text-[13px] text-ink-soft">
+          Review the planned feed{shareLink.allowApproval ? " and approve posts" : ""} — tap any post
+          for details.
+        </p>
+      </header>
+
+      <div className="grid flex-1 gap-8 lg:grid-cols-[minmax(0,420px)_1fr] lg:gap-10">
+        {/* Instagram preview — clean, no app chrome inside */}
+        <div className="mx-auto w-full min-w-0 max-w-[400px]">
+          <div className="overflow-hidden rounded-[28px] border border-line shadow-panel-hover">
+            <div className="h-[720px]">
+              {openPostDetail ? (
+                <InstagramPostDetail
+                  post={openPostDetail}
+                  theme={client.theme}
+                  onBack={() => setOpenPostId(null)}
+                />
+              ) : (
+                igProfile && (
+                  <InstagramProfile
+                    profile={igProfile}
+                    theme={client.theme}
+                    onPostOpen={(postId) => setOpenPostId(postId)}
+                  />
+                )
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Reviewer panel — outside the Instagram UI */}
+        <div className="min-w-0 space-y-4 pb-8">
+          <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">
+            <h2 className="text-[13.5px] font-semibold tracking-tight text-ink">Your details</h2>
+            <p className="mt-0.5 text-[12px] text-ink-faint">Attached to comments and approvals.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <TextField
+                label="Name"
+                value={reviewer.name}
+                onChange={(e) => setReviewer((r) => ({ ...r, name: e.target.value }))}
+                autoComplete="name"
+              />
+              <TextField
+                label="Email"
+                type="email"
+                value={reviewer.email}
+                onChange={(e) => setReviewer((r) => ({ ...r, email: e.target.value }))}
+                autoComplete="email"
+              />
+            </div>
+            {formError && (
+              <p role="alert" className="mt-2 text-[12px] text-red-700">
+                {formError}
+              </p>
+            )}
+          </section>
+
+          {openPost ? (
+            <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">
+              <div className="flex items-center gap-2">
+                <h2 className="text-[13.5px] font-semibold tracking-tight text-ink">This post</h2>
+                <span className="rounded-full bg-panel-raised px-2 py-0.5 text-[10.5px] font-medium text-ink-soft">
+                  {APPROVAL_STATUS_LABELS[openPost.approvalStatus]}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setOpenPostId(null)}
+                  className="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-ink-soft hover:text-ink"
+                >
+                  <Undo2 className="size-3.5" aria-hidden="true" />
+                  Back to grid
+                </button>
+              </div>
+              <TextAreaField
+                label="Message (optional for approval, required for changes)"
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="What should change?"
+                className="mt-1"
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                {shareLink.allowApproval && (
+                  <>
+                    <Button
+                      variant="primary"
+                      disabled={busy || openPost.approvalStatus === "approved"}
+                      onClick={() => void submitDecision("approved", openPost.id, feedback.trim() || null)}
+                    >
+                      <CircleCheck className="size-4" aria-hidden="true" />
+                      Approve
+                    </Button>
+                    <Button
+                      disabled={busy}
+                      onClick={() => {
+                        if (!feedback.trim()) {
+                          setFormError("Describe the change you need first.");
+                          return;
+                        }
+                        void submitDecision("changes_requested", openPost.id, feedback.trim());
+                      }}
+                    >
+                      Request changes
+                    </Button>
+                  </>
+                )}
+                {shareLink.allowComments && (
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => void submitComment(openPost.id, feedback)}
+                  >
+                    <MessageSquare className="size-4" aria-hidden="true" />
+                    Comment only
+                  </Button>
+                )}
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">
+              <h2 className="text-[13.5px] font-semibold tracking-tight text-ink">Review</h2>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-ink-soft">
+                {pendingCount > 0
+                  ? `${pendingCount} ${pendingCount === 1 ? "post is" : "posts are"} waiting for your approval. Tap a post in the grid to review it individually.`
+                  : "Tap any post in the grid to leave feedback on it."}
+              </p>
+              {shareLink.allowApproval && (
+                <Button
+                  variant="primary"
+                  className="mt-3"
+                  disabled={busy || pendingCount === 0}
+                  onClick={() => void approveAllPending()}
+                >
+                  <CircleCheck className="size-4" aria-hidden="true" />
+                  Approve all pending
+                </Button>
+              )}
+              <div className="mt-4 border-t border-line pt-3">
+                <span className="flex items-center gap-1.5 text-[12px] text-ink-faint">
+                  <Grid3x3 className="size-3.5" aria-hidden="true" />
+                  {bundle!.posts.length} planned posts · {bundle!.highlights.length} highlights
+                </span>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      <footer className="mt-auto pt-6 text-center text-[11px] text-ink-faint">
+        Prepared with Gridline Studio
+      </footer>
+    </div>
+  );
+}
+
+export default function SharePage() {
+  return (
+    <ToastProvider>
+      <SharePageInner />
+    </ToastProvider>
+  );
+}
