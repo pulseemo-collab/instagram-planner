@@ -201,7 +201,7 @@ export default function ClientWorkspacePage() {
           mode === "edit" ? "lg:grid-cols-[minmax(0,1fr)_420px]" : "justify-center",
         )}
       >
-        <div className="flex justify-center lg:sticky lg:top-24 lg:self-start">
+        <div className="flex min-w-0 justify-center lg:sticky lg:top-24 lg:self-start">
           <PhoneFrame theme={client.theme}>
             <InstagramProfile
               profile={igProfile}

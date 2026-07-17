@@ -126,17 +126,10 @@ export function UploadDropzone({
 
   return (
     <div className={className}>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={label ?? "Upload files"}
-        onClick={() => inputRef.current?.click()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            inputRef.current?.click();
-          }
-        }}
+      {/* A <label> wrapper gives the file input its accessible name and
+          activates it natively on click — no nested interactive roles
+          (fixes audit BUG-003: axe `label` + `nested-interactive`). */}
+      <label
         onDragOver={(e) => {
           e.preventDefault();
           setDragActive(true);
@@ -144,7 +137,7 @@ export function UploadDropzone({
         onDragLeave={() => setDragActive(false)}
         onDrop={onDrop}
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors",
+          "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent",
           dragActive
             ? "border-accent bg-accent-soft/60"
             : "border-line-strong bg-panel-raised hover:border-ink-faint",
@@ -162,13 +155,14 @@ export function UploadDropzone({
           type="file"
           accept={accept}
           multiple={multiple}
+          aria-label={label ?? "Upload files"}
           className="sr-only"
           onChange={(e) => {
             if (e.target.files?.length) acceptFiles(e.target.files);
             e.target.value = "";
           }}
         />
-      </div>
+      </label>
 
       {items.length > 0 && (
         <ul className="mt-3 space-y-2">

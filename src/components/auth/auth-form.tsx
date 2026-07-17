@@ -130,15 +130,20 @@ function AuthFormInner({ variant }: AuthFormProps) {
         </Button>
       </form>
 
-      <div className="mt-4 border-t border-line pt-4">
-        <Button onClick={continueInDemoMode} className="w-full">
-          Continue in demo mode
-          <ArrowRight className="size-3.5" aria-hidden="true" />
-        </Button>
-        <p className="mt-2 text-center text-[11.5px] leading-relaxed text-ink-faint">
-          Demo mode stores everything locally in this browser — no account needed.
-        </p>
-      </div>
+      {/* Demo entry exists only when Supabase is not configured — on live
+          deployments the server-side proxy requires a real session, so the
+          button would loop back to /login (audit BUG-001). */}
+      {mode === "demo" && (
+        <div className="mt-4 border-t border-line pt-4">
+          <Button onClick={continueInDemoMode} className="w-full">
+            Continue in demo mode
+            <ArrowRight className="size-3.5" aria-hidden="true" />
+          </Button>
+          <p className="mt-2 text-center text-[11.5px] leading-relaxed text-ink-faint">
+            Demo mode stores everything locally in this browser — no account needed.
+          </p>
+        </div>
+      )}
 
       <p className="mt-5 text-center text-[12.5px] text-ink-soft">
         {variant === "login" ? (

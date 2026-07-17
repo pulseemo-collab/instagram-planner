@@ -3,11 +3,18 @@ import { NextResponse, type NextRequest } from "next/server";
 /**
  * Session refresh + optimistic auth redirects. Active only when Supabase is
  * configured; demo mode handles its session entirely client-side.
+ *
+ * Activation is gated on NEXT_PUBLIC_BUILT_WITH_SUPABASE — a flag frozen at
+ * build time (next.config.ts) — so the proxy's mode always matches the mode
+ * inlined into the client bundle. Runtime-only env changes without a rebuild
+ * therefore leave the app consistently in its built mode (audit BUG-002).
  */
 export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return NextResponse.next();
+  if (process.env.NEXT_PUBLIC_BUILT_WITH_SUPABASE !== "1" || !url || !key) {
+    return NextResponse.next();
+  }
 
   const { createServerClient } = await import("@supabase/ssr");
   let response = NextResponse.next({ request });

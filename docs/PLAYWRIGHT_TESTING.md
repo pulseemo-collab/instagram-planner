@@ -1,0 +1,70 @@
+# Playwright Testing Guide
+
+The QA suite lives in `tests/e2e/` with configuration in `playwright.config.ts`.
+
+## One-time setup
+
+```bash
+npm install                     # installs @playwright/test and @axe-core/playwright
+npx playwright install chromium # downloads the browser binary
+```
+
+## Running tests
+
+```bash
+# Full local suite (starts the production server automatically via `npm start`;
+# make sure you've run `npm run build` at least once and port 3000 is free)
+npx playwright test
+
+# Desktop project only / mobile project only
+npx playwright test --project=desktop
+npx playwright test --project=mobile
+
+# One file
+npx playwright test tests/e2e/08-grid.spec.ts
+
+# One test by title
+npx playwright test -g "REAL mouse drag"
+
+# Headed (watch the browser)
+npx playwright test --headed --project=desktop
+
+# Smoke subset against the production deployment
+set PLAYWRIGHT_BASE_URL=https://instagram-planner-five.vercel.app&& npx playwright test --grep @smoke --project=desktop
+```
+
+> **Windows note:** if a previous `npm start` left a server behind, free the port
+> first: `Get-NetTCPConnection -LocalPort 3000 -State Listen | Select -Expand
+> OwningProcess -Unique | % { Stop-Process -Id $_ -Force }`.
+
+## Reports, traces, screenshots
+
+```bash
+npx playwright show-report      # open the HTML report (playwright-report/)
+npx playwright show-trace test-results/<test-folder>/trace.zip
+```
+
+- Failure screenshots and traces: `test-results/` (retained on failure only).
+- Curated evidence screenshots written by the tests themselves:
+  `docs/qa-evidence/<area>/<name>.png`.
+- Accessibility scan output: `docs/qa-evidence/axe-results.json`.
+
+## How test data works
+
+- Every Playwright browser context starts with an **empty IndexedDB**, so the app
+  recreates its deterministic demo seed (3 clients, posts in every state) for each
+  test. Tests never touch your personal browser profile or any production data.
+- `tests/e2e/helpers.ts` → `enterDemo(page, route)` seeds the demo session flag
+  before page scripts run, then navigates.
+- Upload tests use small generated fixtures in `tests/assets/` (PNG, JPG, WEBP,
+  WebM, and an invalid `.txt`). Nothing is fetched from the network.
+- Tests tagged `@smoke` are safe against remote deployments (read-mostly; the
+  reviewer flow writes only to demo/browser-local data). Tests tagged `@mobile`
+  run in the iPhone 13 profile via the `mobile` project.
+
+## Conventions
+
+- Selectors prefer roles, accessible names, and labels (`getByRole`, `getByLabel`).
+  The app's own aria-labels are the contract — no CSS-class-only selectors.
+- One worker, `retries: 1` (IndexedDB seeding makes tests order-independent, but
+  the suite is kept serial to avoid port/browser contention on Windows).

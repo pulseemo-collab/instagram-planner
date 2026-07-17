@@ -11,8 +11,10 @@
 
   /* Ink scale */
   --color-ink: #211e1a;
-  --color-ink-soft: #6e6960;
-  --color-ink-faint: #a29c91;
+  /* Muted text steps meet WCAG AA (≥4.5:1) on canvas, panel, and raised
+     backgrounds — verified: soft 6.1:1, faint 4.6:1 on canvas. */
+  --color-ink-soft: #5f5a51;
+  --color-ink-faint: #736d62;
 
   /* Hairlines */
   --color-line: #e6e3db;

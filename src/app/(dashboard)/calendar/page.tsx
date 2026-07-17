@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Film, Image as ImageIcon, Layers } from "lucide-react";
 import { MediaArt } from "@/components/instagram/media-art";
@@ -19,7 +19,7 @@ import {
 } from "@/lib/dates";
 import { coverMediaFor, parseMediaRef } from "@/lib/instagram/map-profile";
 import { useMutate, useWorkspace } from "@/lib/store/hooks";
-import type { Post, PostType } from "@/types/domain";
+import type { Client, Post, PostMedia, PostType } from "@/types/domain";
 
 const typeIcons: Record<PostType, typeof ImageIcon> = {
   image: ImageIcon,
@@ -29,8 +29,74 @@ const typeIcons: Record<PostType, typeof ImageIcon> = {
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+interface PostChipProps {
+  post: Post;
+  clientById: Map<string, Client>;
+  media: PostMedia[];
+  draggingId: string | null;
+  onOpen: (post: Post) => void;
+  onDragStartChip: (id: string) => void;
+  onDragEndChip: () => void;
+}
+
+/**
+ * Draggable calendar chip. Defined at module scope so its component identity
+ * is stable across the page's drag-state re-renders — a nested definition
+ * remounted the DOM node during `dragstart`, which made the browser abort the
+ * drag session entirely (audit BUG-005). A button (not an anchor) with
+ * programmatic navigation keeps drag semantics first-class.
+ */
+function PostChip({
+  post,
+  clientById,
+  media,
+  draggingId,
+  onOpen,
+  onDragStartChip,
+  onDragEndChip,
+}: PostChipProps) {
+  const client = clientById.get(post.clientId);
+  const cover = coverMediaFor(post, media);
+  const ref = parseMediaRef(cover?.thumbnailUrl ?? cover?.url ?? null);
+  const TypeIcon = typeIcons[post.type];
+  return (
+    <button
+      type="button"
+      draggable
+      onClick={() => onOpen(post)}
+      onDragStart={(e) => {
+        onDragStartChip(post.id);
+        e.dataTransfer.effectAllowed = "move";
+        // A drag with an empty DataTransfer never establishes a session in
+        // some Chromium environments — always provide payload data.
+        e.dataTransfer.setData("text/plain", post.id);
+      }}
+      onDragEnd={onDragEndChip}
+      className={cn(
+        "group flex w-full items-center gap-1.5 rounded-md border border-line bg-panel px-1.5 py-1 text-left shadow-panel transition-opacity hover:border-line-strong",
+        draggingId === post.id && "opacity-40",
+      )}
+      title={`${client?.name ?? ""} — ${post.caption || "post"}`}
+    >
+      <span className="relative block size-5 shrink-0 overflow-hidden rounded-sm">
+        <MediaArt art={ref.art} imageUrl={ref.imageUrl} />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[10.5px] font-medium leading-tight text-ink">
+        {client?.name}
+      </span>
+      <TypeIcon className="size-3 shrink-0 text-ink-faint" aria-hidden="true" />
+      {post.scheduledAt && (
+        <span className="hidden shrink-0 font-mono text-[9.5px] text-ink-faint xl:inline">
+          {formatTime(post.scheduledAt)}
+        </span>
+      )}
+    </button>
+  );
+}
+
 export default function CalendarPage() {
   const { status, snapshot } = useWorkspace();
+  const router = useRouter();
   const mutate = useMutate();
   const { toast } = useToast();
 
@@ -100,44 +166,17 @@ export default function CalendarPage() {
     toast("Post rescheduled");
   }
 
-  function PostChip({ post }: { post: Post }) {
-    const client = clientById.get(post.clientId);
-    const cover = coverMediaFor(post, snapshot!.media);
-    const ref = parseMediaRef(cover?.thumbnailUrl ?? cover?.url ?? null);
-    const TypeIcon = typeIcons[post.type];
-    return (
-      <Link
-        href={`/clients/${post.clientId}/posts/${post.id}`}
-        draggable
-        onDragStart={(e) => {
-          setDraggingId(post.id);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragEnd={() => {
-          setDraggingId(null);
-          setDropDay(null);
-        }}
-        className={cn(
-          "group flex items-center gap-1.5 rounded-md border border-line bg-panel px-1.5 py-1 text-left shadow-panel transition-opacity hover:border-line-strong",
-          draggingId === post.id && "opacity-40",
-        )}
-        title={`${client?.name ?? ""} — ${post.caption || "post"}`}
-      >
-        <span className="relative block size-5 shrink-0 overflow-hidden rounded-sm">
-          <MediaArt art={ref.art} imageUrl={ref.imageUrl} />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[10.5px] font-medium leading-tight text-ink">
-          {client?.name}
-        </span>
-        <TypeIcon className="size-3 shrink-0 text-ink-faint" aria-hidden="true" />
-        {post.scheduledAt && (
-          <span className="hidden shrink-0 font-mono text-[9.5px] text-ink-faint xl:inline">
-            {formatTime(post.scheduledAt)}
-          </span>
-        )}
-      </Link>
-    );
-  }
+  const chipProps = {
+    clientById,
+    media: snapshot.media,
+    draggingId,
+    onOpen: (post: Post) => router.push(`/clients/${post.clientId}/posts/${post.id}`),
+    onDragStartChip: (id: string) => setDraggingId(id),
+    onDragEndChip: () => {
+      setDraggingId(null);
+      setDropDay(null);
+    },
+  };
 
   return (
     <div className="space-y-5">
@@ -236,7 +275,7 @@ export default function CalendarPage() {
                       {day.getDate()}
                     </span>
                     {posts.map((post) => (
-                      <PostChip key={post.id} post={post} />
+                      <PostChip key={post.id} post={post} {...chipProps} />
                     ))}
                   </div>
                 );
@@ -264,7 +303,7 @@ export default function CalendarPage() {
           <div className="flex flex-wrap gap-2">
             {unscheduled.map((post) => (
               <div key={post.id} className="w-44">
-                <PostChip post={post} />
+                <PostChip post={post} {...chipProps} />
               </div>
             ))}
           </div>
