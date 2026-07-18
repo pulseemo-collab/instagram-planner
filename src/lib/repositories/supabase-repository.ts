@@ -108,6 +108,8 @@ function mapPost(row: Row): Post {
   return {
     id: asStr(row.id),
     clientId: asStr(row.client_id),
+    name: asStr(row.name),
+    stage: (asStr(row.stage) || "post") as Post["stage"],
     type: asStr(row.type) as Post["type"],
     caption: asStr(row.caption),
     location: asStrOrNull(row.location),
@@ -129,6 +131,8 @@ function mapPost(row: Row): Post {
 function postToRow(patch: Partial<Post>): Row {
   const row: Row = {};
   if (patch.clientId !== undefined) row.client_id = patch.clientId;
+  if (patch.name !== undefined) row.name = patch.name;
+  if (patch.stage !== undefined) row.stage = patch.stage;
   if (patch.type !== undefined) row.type = patch.type;
   if (patch.caption !== undefined) row.caption = patch.caption;
   if (patch.location !== undefined) row.location = patch.location;
@@ -564,8 +568,13 @@ export class SupabaseRepository implements Repository {
     const { data: auth } = await this.sb.auth.getUser();
     if (!auth.user) throw new Error("Not signed in");
     onProgress?.(0.1);
-    const extension = file.name.split(".").pop()?.toLowerCase() ?? "bin";
-    const path = `${auth.user.id}/${createId()}.${extension}`;
+    // ORIGINAL MEDIA RULE: the File object is passed straight to Storage —
+    // no canvas, no re-encode, no base64, no thumbnails. The original
+    // filename is preserved inside a unique folder (uuid prevents collisions
+    // without renaming the file); only characters that are invalid in storage
+    // object keys are replaced.
+    const safeName = file.name.replace(/[^\w.\-() ]/g, "_") || "file";
+    const path = `${auth.user.id}/${createId()}/${safeName}`;
     const { error } = await this.sb.storage.from(bucket).upload(path, file, {
       contentType: file.type,
       upsert: false,

@@ -24,6 +24,22 @@ limitations, not defects.*
   has an unread dot but no panel. Both look interactive. Documented in the user
   manual; see suggestions S-3/S-4.
 
+## LIMIT-004 — Comment "resolve" flag has no creator UI (by design of the calendar redesign)
+
+- **Status:** Product decision (calendar-workspace redesign, July 2026)
+- The Feedback card was removed from the post workspace per the calendar redesign;
+  reviewer comments now render inside the Instagram preview and in the activity
+  feed, and the full review workflow lives on public share pages. The
+  `comments.resolved` field and repository methods remain intact, but no screen
+  currently toggles it. Re-surface it later if comment triage becomes a need.
+
+## LIMIT-005 — Touch drag-and-drop uses the Schedule dialog fallback
+
+- **Status:** Documented limitation
+- HTML5 drag-and-drop does not fire on touch devices; on phones/tablets the
+  card's **Schedule / Reschedule / Unschedule** buttons (date-time dialog) are the
+  supported path. Pointer drag works on desktop.
+
 ## LIMIT-003 — Reposts and Tagged tabs are always empty
 
 - **Status:** Confirmed

@@ -65,6 +65,8 @@ export default function ContentPage() {
     const now = dateFilter.asOf;
     return snapshot.posts
       .filter((post) => {
+        // Designer content packages live on the Calendar, not here.
+        if (post.stage !== "post") return false;
         if (clientFilter !== "all" && post.clientId !== clientFilter) return false;
         if (typeFilter !== "all" && post.type !== typeFilter) return false;
         if (statusFilter !== "all" && post.status !== statusFilter) return false;
@@ -78,7 +80,7 @@ export default function ContentPage() {
         }
         if (q) {
           const client = snapshot.clients.find((c) => c.id === post.clientId);
-          const haystack = `${post.caption} ${post.hashtags.join(" ")} ${client?.name ?? ""} ${
+          const haystack = `${post.name} ${post.caption} ${post.hashtags.join(" ")} ${client?.name ?? ""} ${
             client?.instagramUsername ?? ""
           }`.toLowerCase();
           if (!haystack.includes(q)) return false;
@@ -338,7 +340,7 @@ export default function ContentPage() {
                         <span className="relative block h-10 w-8 shrink-0 overflow-hidden rounded border border-line">
                           <MediaArt art={ref.art} imageUrl={ref.imageUrl} />
                         </span>
-                        <span className="line-clamp-1 max-w-52 text-ink">{post.caption || "(no caption)"}</span>
+                        <span className="line-clamp-1 max-w-52 text-ink">{post.name || post.caption || "(no caption)"}</span>
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-ink-soft">{client?.name}</td>

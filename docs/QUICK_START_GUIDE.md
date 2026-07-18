@@ -30,21 +30,24 @@ clients are pre-loaded so you can explore immediately.
 3. Optionally upload a profile picture and pick light or dark preview theme.
 4. Click **Create client** — you land directly in their workspace.
 
-## 4. Add posts
+## 4. Add content (designer)
 
-In the client workspace, open the **Posts** panel tab and click **New post**.
+Open **Calendar**, pick the client, and click **Add content** in the **Content**
+section. The dialog asks for exactly two things: a **content name** (e.g. *Post 1*)
+and the **original media files** — one image, several images (one future carousel),
+or a video. No captions, no scheduling: the designer's job ends here. Files are
+stored **exactly as uploaded** — original bytes, filename, quality.
 
-- Drop one image for a **single post**, several for a **carousel**, or switch the type
-  to **Reel** and upload a video plus a cover image.
-- Add the caption, hashtags, location, and alt text.
-- Save — the post appears instantly in the Instagram grid. Drag tiles (or focus a tile
-  and press **Ctrl+Arrow**) to rearrange the feed.
+## 5. Schedule & create the post (scheduler)
 
-## 5. Schedule
-
-Either edit a post and switch on **Schedule** with a date and time, or open
-**Calendar** and drag any unscheduled draft onto a day. Dates always use your local
-timezone.
+Drag a content card onto a calendar day — that attaches the **date only** (the chip
+gets an amber dot: not a post yet). Click the placed item to open **Create post**:
+media is loaded from the package, the date is pre-filled in **DD/MM/YYYY**, and the
+**time is empty** for you to choose. Fill the caption and details, press
+**Create post** — from then on it's a normal post (**Edit post / Save changes**),
+editable beside the live Instagram preview. The **← Calendar** button always brings
+you back with your client and month intact. Multiple items stack per day; drop a
+chip back onto the Content section to unschedule. Dates use your local timezone.
 
 ## 6. Share with your client
 

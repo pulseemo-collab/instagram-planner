@@ -38,8 +38,14 @@ exercised to protect production data).
 | Creator approval actions + resolve comments | post detail | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | |
 | Content filters/search/views | `/content` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | Combined filters + clear |
 | Bulk select / approval / delete | `/content` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | |
-| Calendar month nav / Today / client filter | `/calendar` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | |
-| Calendar drag reschedule | `/calendar` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Literal Playwright mouse drag, post-fix (BUG-005 resolved: PostChip remount aborted drags) |
+| Calendar single-client selection + persisted switcher (no "All clients") | `/calendar` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | Selection state → picker; localStorage persistence |
+| Post package creation (required name; 1..n original files = one package) | `/calendar` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Multi-file stays one card ("3 files") |
+| Original-media integrity (stored bytes = uploaded bytes) | `/calendar` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Byte-for-byte base64 comparison in demo path; live path passes the File object straight to Storage (code-verified) |
+| Posts section filters (All/Unscheduled/Scheduled); scheduled stays listed | `/calendar` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | |
+| Calendar drag: card→day, day→day, drop-to-unschedule | `/calendar` | ✅ | ➖ | 🟡 | ✅ | 📄 | Pass | Literal Playwright mouse drags; touch uses the Schedule dialog fallback |
+| Schedule dialog fallback (touch/keyboard) + multiple posts per day | `/calendar` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Two chips stacked on one day verified |
+| Inline post editor beside preview (no modal; no Feedback/Approval cards) | post detail | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | Live caption preview + persistence verified |
+| Calendar month nav / Today | `/calendar` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | |
 | Local-timezone scheduling (no UTC shift) | `/calendar` | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | 00:15 stays on chosen day |
 | Share link create/expiry/toggles/regenerate | share dialog | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | |
 | Previews page statuses + actions | `/previews` | ✅ | ➖ | ✅ | ✅ | 📄 | Pass | Active/Disabled/Expired states |

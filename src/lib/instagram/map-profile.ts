@@ -69,7 +69,9 @@ export function buildIgProfile(
   posts: Post[],
   media: PostMedia[],
 ): IgProfile {
-  const ordered = sortForGrid(posts);
+  // Designer content packages are not Instagram posts yet — only completed
+  // posts render on the profile grid.
+  const ordered = sortForGrid(posts.filter((p) => p.stage === "post"));
   const avatarRef = parseMediaRef(client.avatarUrl);
   return {
     username: client.instagramUsername,

@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
-import { enterDemo, evidence } from "./helpers";
+import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import { enterDemo, enterDemoCalendar, evidence, paths } from "./helpers";
 
 test.describe("Content page", () => {
   test("filters narrow results; combined filters and clear work", async ({ page }) => {
@@ -9,9 +10,7 @@ test.describe("Content page", () => {
     expect(total).toBeGreaterThan(10);
 
     await page.getByLabel("Filter by client").selectOption({ label: "Kavo Coffee" });
-    await expect
-      .poll(async () => cards.count())
-      .toBeLessThan(total);
+    await expect.poll(async () => cards.count()).toBeLessThan(total);
 
     await page.getByLabel("Filter by type").selectOption("reel");
     await expect.poll(async () => cards.count()).toBe(1);
@@ -49,80 +48,328 @@ test.describe("Content page", () => {
   });
 });
 
-test.describe("Calendar", () => {
-  test("REAL mouse drag moves a post to another day and persists @smoke", async ({ page }) => {
-    // Calendar chips are draggable <button> elements (BUG-005 fix), so the
-    // same literal pointer drag that works for grid tiles applies here.
+/* ------------------------------------------------------------------------- */
+/* Calendar — designer content packages become scheduler-created posts       */
+/* ------------------------------------------------------------------------- */
+
+const dayCell = (page: Page) => page.locator(".grid.grid-cols-7 > div");
+const chips = (page: Page) => page.locator(".grid.grid-cols-7 button[draggable]");
+const contentCards = (page: Page) =>
+  page.locator('[role=group][aria-label^="Content package"]');
+
+async function addContent(page: Page, name: string, files: string[]): Promise<void> {
+  await page.getByRole("button", { name: "Add content" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Add content" });
+  await dialog.getByLabel("Content name").fill(name);
+  await dialog.locator('input[type="file"]').first().setInputFiles(files.map(paths.asset));
+  await dialog.getByRole("button", { name: "Add content" }).click();
+  await expect(page.locator("body")).toContainText("Content added");
+}
+
+test.describe("Calendar workspace", () => {
+  test("requires one selected client; no All-clients option @smoke", async ({ page }) => {
     await enterDemo(page, "/calendar");
-    const chip = page
-      .locator(".grid.grid-cols-7 button[draggable]", { hasText: "Studio" })
-      .first();
-    await expect(chip).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Choose a client" })).toBeVisible();
+    await expect(page.locator(".grid.grid-cols-7")).toHaveCount(0);
+    await expect(page.getByText("All clients")).toHaveCount(0);
+    await evidence(page, "calendar", "client-selection-state");
 
-    const emptyCell = page
-      .locator(".grid.grid-cols-7 > div")
-      .filter({ hasNot: page.locator("button") })
-      .filter({ hasText: /^2[0-8]$/ })
-      .first();
-    const targetDay = (await emptyCell.textContent())?.trim();
-
-    await chip.dragTo(emptyCell);
-
-    await expect(async () => {
-      const movedCell = page
-        .locator(".grid.grid-cols-7 > div")
-        .filter({ hasText: new RegExp(`^${targetDay}`) })
-        .first();
-      await expect(movedCell.locator("button", { hasText: "Studio" })).toBeVisible();
-    }).toPass({ timeout: 6_000 });
-    await expect(page.locator("body")).toContainText("Post rescheduled");
-    await evidence(page, "calendar", "after-drag-reschedule");
+    await page.getByRole("button", { name: /Maison Aurelle/ }).click();
+    await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Switch client")).toHaveValue("client-aurelle");
+    await expect(page.getByText("All clients")).toHaveCount(0);
+    // Seeded designer packages for Aurelle.
+    await expect(contentCards(page)).toHaveCount(2);
 
     await page.reload();
-    const movedCell = page
-      .locator(".grid.grid-cols-7 > div")
-      .filter({ hasText: new RegExp(`^${targetDay}`) })
-      .first();
-    await expect(movedCell.locator("button", { hasText: "Studio" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Switch client")).toHaveValue("client-aurelle");
   });
 
-  test("month navigation and Today button", async ({ page }) => {
-    await enterDemo(page, "/calendar");
-    const heading = page.getByRole("heading", { level: 2 });
-    const current = await heading.textContent();
-    await page.getByRole("button", { name: "Next month" }).click();
-    await expect(heading).not.toHaveText(current ?? "");
-    await page.getByRole("button", { name: "Today" }).click();
-    await expect(heading).toHaveText(current ?? "");
+  test("Add content dialog is minimal: name + media only @smoke", async ({ page }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+
+    // Exactly the designer fields — nothing else.
+    await expect(dialog.getByLabel("Content name")).toBeVisible();
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
+    for (const absent of [
+      "Caption",
+      "Hashtags",
+      "Location",
+      "Alt text",
+      "Post type",
+      "Approval status",
+    ]) {
+      await expect(dialog.getByLabel(absent)).toHaveCount(0);
+    }
+    await expect(dialog.getByRole("switch")).toHaveCount(0);
+
+    // Name is required.
+    await dialog.locator('input[type="file"]').first().setInputFiles(paths.asset("photo-1.png"));
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(dialog.getByText(/Give the content a name/)).toBeVisible();
+
+    await dialog.getByLabel("Content name").fill("Post 1");
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(page.locator("body")).toContainText("Content added");
+
+    const card = contentCards(page).filter({ hasText: "Post 1" });
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText("1 file");
+    await expect(card).toContainText("Unscheduled");
   });
 
-  test("client filter hides other clients' chips; unscheduled tray lists drafts", async ({
+  test("multiple original files stay one content package @smoke", async ({ page }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await addContent(page, "Summer campaign 01", ["photo-1.png", "photo-2.png", "photo-3.png"]);
+
+    const card = contentCards(page).filter({ hasText: "Summer campaign 01" });
+    await expect(card).toHaveCount(1); // ONE package, not three
+    await expect(card).toContainText("3 files");
+    await evidence(page, "calendar", "package-card-multifile");
+  });
+
+  test("content packages never appear on the Instagram grid or content page", async ({
     page,
   }) => {
-    await enterDemo(page, "/calendar");
-    await page.getByLabel("Filter by client").selectOption({ label: "Kavo Coffee" });
-    await expect(page.locator(".grid.grid-cols-7 button[draggable]", { hasText: "Studio" })).toHaveCount(0);
-    await expect(page.locator("body")).toContainText("Unscheduled drafts");
-    await expect(page.locator("section button[draggable]", { hasText: "Kavo" }).first()).toBeVisible();
+    await enterDemoCalendar(page, "client-aurelle");
+    await expect(contentCards(page)).toHaveCount(2); // Post 1, Post 2 seeds
+    // Workspace grid shows only completed posts (8 for Aurelle).
+    await page.goto("/clients/client-aurelle");
+    await expect(page.locator(".ig-root .grid.grid-cols-3 > button")).toHaveCount(8);
+    // Content page lists posts only.
+    await page.goto("/content");
+    await page.getByLabel("Search content").fill("Post 1");
+    await expect(page.getByText("No matches")).toBeVisible();
   });
 
-  test("no UTC day-shift: scheduled time renders on the local calendar day", async ({ page }) => {
+  test("ORIGINAL MEDIA RULE: stored bytes are identical to the uploaded file", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await addContent(page, "Integrity check", ["photo-1.png"]);
+    await contentCards(page)
+      .filter({ hasText: "Integrity check" })
+      .getByRole("button", { name: /Open/ })
+      .click();
+    await expect(page).toHaveURL(/\/posts\//);
+
+    const src = await page.locator(".ig-root img").first().getAttribute("src");
+    expect(src).toMatch(/^data:image\/png;base64,/);
+    const storedBase64 = src!.split(",")[1];
+    const originalBase64 = fs.readFileSync(paths.asset("photo-1.png")).toString("base64");
+    expect(storedBase64).toBe(originalBase64);
+  });
+
+  test("FULL WORKFLOW: drag content to a day, create the post, reopen as edit @smoke", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await addContent(page, "Post 1", ["photo-1.png", "photo-2.png"]);
+    const card = contentCards(page).filter({ hasText: "Post 1" });
+
+    // Scheduler drags the package onto a day — date attaches, still not a post.
+    const emptyCell = dayCell(page)
+      .filter({ hasNot: page.locator("button") })
+      .filter({ hasText: /^1[0-4]$/ })
+      .first();
+    const targetDay = (await emptyCell.textContent())?.trim();
+    await card.dragTo(emptyCell);
+    await expect(page.locator("body")).toContainText("Content placed");
+    await expect(card).toContainText(/Scheduled · \d{2}\/\d{2}\/\d{4}/); // DD/MM/YYYY
+
+    const placedChip = dayCell(page)
+      .filter({ hasText: new RegExp(`^${targetDay}`) })
+      .first()
+      .locator("button", { hasText: "Post 1" });
+    await expect(placedChip).toBeVisible();
+
+    // Opening it for the FIRST time shows "Create post" — not "Edit post".
+    await placedChip.click();
+    await expect(page).toHaveURL(/from=calendar/);
+    await expect(page.getByRole("heading", { name: "Create post" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Edit post" })).toHaveCount(0);
+    // Back button points to the calendar, not the client.
+    await expect(page.locator("#main-content").getByRole("link", { name: "Calendar" })).toBeVisible();
+
+    const editor = page.locator('section[aria-label="Create post"]');
+    // Date came from the drop (DD/MM/YYYY) — the time is deliberately empty.
+    const dateValue = await editor.getByLabel("Date (DD/MM/YYYY)").inputValue();
+    expect(dateValue).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    await expect(editor.getByLabel("Time")).toHaveValue("");
+
+    // Time is required to create the post.
+    await editor.getByRole("button", { name: "Create post" }).click();
+    await expect(editor.getByText("Choose a publishing time.")).toBeVisible();
+
+    await editor.getByLabel("Caption").fill("Created from content: fresh drop");
+    await editor.getByLabel("Time").fill("09:30");
+    await editor.getByRole("button", { name: "Create post" }).click();
+    await expect(page.locator("body")).toContainText("Post created");
+
+    // The same screen now behaves as a normal editable post.
+    await expect(page.getByRole("heading", { name: "Edit post" })).toBeVisible();
+    await expect(
+      page
+        .locator('section[aria-label="Edit post"]')
+        .getByRole("button", { name: "Save changes" }),
+    ).toBeVisible();
+    await evidence(page, "calendar", "create-post-from-content");
+
+    // Back to the calendar with client preserved; chip shows the chosen time.
+    await page.locator("#main-content").getByRole("link", { name: "Calendar" }).click();
+    await expect(page).toHaveURL(/\/calendar$/);
+    await expect(page.getByLabel("Switch client")).toHaveValue("client-kavo");
+    await expect(
+      dayCell(page)
+        .filter({ hasText: new RegExp(`^${targetDay}`) })
+        .first()
+        .locator("button", { hasText: "Post 1" }),
+    ).toBeVisible();
+
+    // Reopen — still "Edit post"; caption persists after a full reload.
+    await page.reload();
+    await dayCell(page)
+      .filter({ hasText: new RegExp(`^${targetDay}`) })
+      .first()
+      .locator("button", { hasText: "Post 1" })
+      .click();
+    await expect(page.getByRole("heading", { name: "Edit post" })).toBeVisible();
+    await expect(page.locator(".ig-root").last()).toContainText("Created from content");
+  });
+
+  test("back navigation stays contextual: from calendar vs from client workspace", async ({
+    page,
+  }) => {
+    // From the calendar → "Calendar".
+    await enterDemoCalendar(page, "client-aurelle");
+    await chips(page).filter({ hasText: "Héritage signet" }).first().click();
+    await expect(page.locator("#main-content").getByRole("link", { name: "Calendar" })).toBeVisible();
+    await expect(page.locator("#main-content").getByRole("link", { name: "Maison Aurelle" })).toHaveCount(0);
+
+    // From the client workspace grid → client name (existing navigation).
+    await enterDemo(page, "/clients/client-aurelle");
+    await page.locator(".ig-root .grid.grid-cols-3 > button").first().click();
+    await expect(page.locator("#main-content").getByRole("link", { name: "Maison Aurelle" })).toBeVisible();
+    await expect(page.locator("#main-content").getByRole("link", { name: "Calendar" })).toHaveCount(0);
+  });
+
+  test("month is preserved when returning from a post", async ({ page }) => {
+    await enterDemoCalendar(page, "client-aurelle");
+    await page.getByRole("button", { name: "Next month" }).click();
+    const monthLabel = await page.getByRole("heading", { level: 2 }).textContent();
+    await contentCards(page).first().getByRole("button", { name: /Open/ }).click();
+    await page.locator("#main-content").getByRole("link", { name: "Calendar" }).click();
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(monthLabel ?? "");
+  });
+
+  test("content chips move between days and unschedule by dropping on Content", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await addContent(page, "Mover", ["photo-1.png"]);
+    const card = contentCards(page).filter({ hasText: "Mover" });
+
+    const firstCell = dayCell(page)
+      .filter({ hasNot: page.locator("button") })
+      .filter({ hasText: /^1[0-4]$/ })
+      .first();
+    await card.dragTo(firstCell);
+    await expect(page.locator("body")).toContainText("Content placed");
+
+    const secondCell = dayCell(page)
+      .filter({ hasNot: page.locator("button") })
+      .filter({ hasText: /^2[0-6]$/ })
+      .first();
+    const secondDay = (await secondCell.textContent())?.trim();
+    await chips(page).filter({ hasText: "Mover" }).first().dragTo(secondCell);
+    await expect(
+      dayCell(page)
+        .filter({ hasText: new RegExp(`^${secondDay}`) })
+        .first()
+        .locator("button", { hasText: "Mover" }),
+    ).toBeVisible();
+
+    await chips(page)
+      .filter({ hasText: "Mover" })
+      .first()
+      .dragTo(page.getByRole("heading", { name: "Content", exact: true }));
+    await expect(page.locator("body")).toContainText("Content returned to Unscheduled");
+    await expect(chips(page).filter({ hasText: "Mover" })).toHaveCount(0);
+    await expect(card).toContainText("Unscheduled");
+
+    await page.reload();
+    await expect(contentCards(page).filter({ hasText: "Mover" })).toContainText("Unscheduled");
+  });
+
+  test("multiple items stack on the same date via the DD/MM/YYYY dialog @smoke", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await addContent(page, "Stack A", ["photo-1.png"]);
+    await addContent(page, "Stack B", ["photo-2.png"]);
+
+    const now = new Date();
+    const numeric = `15/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+    for (const name of ["Stack A", "Stack B"]) {
+      await contentCards(page)
+        .filter({ hasText: name })
+        .getByRole("button", { name: "Schedule", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", { name: /Schedule/ });
+      await dialog.getByLabel("Date (DD/MM/YYYY)").fill(numeric);
+      await dialog.getByRole("button", { name: "Schedule" }).click();
+      await expect(page.locator("body")).toContainText("Content placed");
+    }
+
+    const cell = dayCell(page).filter({ hasText: /^15/ }).first();
+    await expect(cell.locator("button", { hasText: "Stack A" })).toBeVisible();
+    await expect(cell.locator("button", { hasText: "Stack B" })).toBeVisible();
+    await evidence(page, "calendar", "two-posts-same-day");
+  });
+
+  test("Content filters: All / Unscheduled / Scheduled; placed content stays listed", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-aurelle");
+    await expect(contentCards(page)).toHaveCount(2); // seeded Post 1 + Post 2
+
+    await contentCards(page)
+      .filter({ hasText: "Post 1" })
+      .getByRole("button", { name: "Schedule", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: /Schedule/ });
+    await dialog.getByRole("button", { name: "Schedule" }).click();
+    await expect(page.locator("body")).toContainText("Content placed");
+
+    await page.getByRole("radio", { name: "Scheduled", exact: true }).click();
+    await expect.poll(() => contentCards(page).count()).toBe(1);
+    await expect(contentCards(page).first()).toContainText(/Scheduled · \d{2}\/\d{2}\/\d{4}/);
+
+    await page.getByRole("radio", { name: "Unscheduled" }).click();
+    await expect.poll(() => contentCards(page).count()).toBe(1);
+
+    await page.getByRole("radio", { name: "All" }).click();
+    await expect.poll(() => contentCards(page).count()).toBe(2);
+  });
+
+  test("editing date/time inline (DD/MM/YYYY) updates the calendar without UTC shift", async ({
+    page,
+  }) => {
     await enterDemo(page, "/clients/client-aurelle/posts/post-a4");
-    await page.getByRole("button", { name: "Edit post" }).click();
-    const dialog = page.getByRole("dialog", { name: "Edit post" });
-    await dialog.getByRole("switch", { name: "Schedule" }).click();
+    const editor = page.locator('section[aria-label="Edit post"]');
+    await editor.getByRole("switch", { name: "Schedule" }).click();
     // Local midnight is where UTC conversion bugs shift a day.
-    await dialog.getByLabel("Date").fill("2026-08-01");
-    await dialog.getByLabel("Time").fill("00:15");
-    await dialog.getByRole("button", { name: "Save post" }).click();
+    await editor.getByLabel("Date (DD/MM/YYYY)").fill("01/08/2026");
+    await editor.getByLabel("Time").fill("00:15");
+    await editor.getByRole("button", { name: "Save changes" }).click();
     await expect(page.locator("body")).toContainText("Post updated");
 
-    await page.goto("/calendar");
+    await enterDemoCalendar(page, "client-aurelle");
     await page.getByRole("button", { name: "Next month" }).click(); // August 2026
-    const day1 = page
-      .locator(".grid.grid-cols-7 > div")
-      .filter({ hasText: /^1(?!\d)/ })
-      .first();
-    await expect(day1.locator("button", { hasText: "Maison" })).toBeVisible();
+    const day1 = dayCell(page).filter({ hasText: /^1(?!\d)/ }).first();
+    await expect(day1.locator("button", { hasText: "Summer lookbook" })).toBeVisible();
   });
 });

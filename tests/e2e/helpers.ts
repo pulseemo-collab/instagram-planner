@@ -25,6 +25,21 @@ export async function enterDemo(page: Page, route = "/"): Promise<void> {
   await expect(page.locator("body")).not.toContainText("Loading workspace…", { timeout: 15_000 });
 }
 
+/** Demo session + a pre-selected calendar client (the calendar is single-client). */
+export async function enterDemoCalendar(page: Page, clientId = "client-aurelle"): Promise<void> {
+  await page.addInitScript(
+    ([id]) => {
+      window.localStorage.setItem("gridline-demo-session", "1");
+      window.localStorage.setItem("gridline-calendar-client", id);
+    },
+    [clientId] as const,
+  );
+  await page.goto("/calendar");
+  await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
 /** Collect console errors + uncaught page errors for later assertions. */
 export function watchConsole(page: Page): { errors: string[] } {
   const errors: string[] = [];

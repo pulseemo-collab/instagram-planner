@@ -53,10 +53,12 @@ test.describe("Dashboard", () => {
       .nth(1)
       .textContent();
 
-    // Approve a seeded awaiting post from its detail page.
+    // Approve a seeded awaiting post via the inline editor on its detail page.
     await page.goto("/clients/client-aurelle/posts/post-a1");
-    await page.getByRole("button", { name: "Mark approved" }).click();
-    await expect(page.locator("body")).toContainText("Marked approved");
+    const editor = page.locator('section[aria-label="Edit post"]');
+    await editor.getByLabel("Approval status").selectOption("approved");
+    await editor.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator("body")).toContainText("Post updated");
 
     await page.goto("/");
     await waitForDashboard(page);

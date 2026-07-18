@@ -20,8 +20,11 @@ test.describe("Uploads & post creation", () => {
     await expect(dialog.getByText("photo-1.png")).toHaveCount(0);
   });
 
-  test("post requires media before saving", async ({ page }) => {
+  test("post requires a name, then media, before saving", async ({ page }) => {
     const dialog = await openComposer(page);
+    await dialog.getByRole("button", { name: "Create post" }).click();
+    await expect(dialog.getByText(/Give the post a name/)).toBeVisible();
+    await dialog.getByLabel("Post name").fill("Validation check");
     await dialog.getByRole("button", { name: "Create post" }).click();
     await expect(dialog.getByText("Add at least one media file.")).toBeVisible();
   });
@@ -32,6 +35,7 @@ test.describe("Uploads & post creation", () => {
     const dialog = await openComposer(page);
     await dialog.locator('input[type="file"]').first().setInputFiles(paths.asset("photo.jpg"));
     await expect(dialog.locator("li").filter({ hasText: "1" }).first()).toBeVisible();
+    await dialog.getByLabel("Post name").fill("Fresh drop");
     await dialog.getByLabel("Caption").fill("Fresh drop ☕ — Üñíçødé test");
     await dialog.getByLabel("Hashtags").fill("#coffee specialty  #rotterdam");
     await dialog.getByLabel("Location").fill("Rotterdam");
@@ -67,6 +71,7 @@ test.describe("Uploads & post creation", () => {
     await dialog.getByRole("button", { name: "Remove slide 3" }).click();
     await expect(dialog.getByText("Media (2 slides)")).toBeVisible();
 
+    await dialog.getByLabel("Post name").fill("Carousel test");
     await dialog.getByLabel("Caption").fill("Carousel test");
     await dialog.getByRole("button", { name: "Create post" }).click();
     await expect(page.locator("body")).toContainText("Post created");
@@ -91,6 +96,7 @@ test.describe("Uploads & post creation", () => {
     await expect(dialog.getByText("clip.webm")).toBeVisible();
     // Upload the reel cover (second dropzone).
     await dialog.locator('input[type="file"]').nth(1).setInputFiles(paths.asset("cover.png"));
+    await dialog.getByLabel("Post name").fill("Reel test");
     await dialog.getByLabel("Caption").fill("Reel test");
     await dialog.getByRole("button", { name: "Create post" }).click();
     await expect(page.locator("body")).toContainText("Post created");
@@ -102,26 +108,27 @@ test.describe("Uploads & post creation", () => {
     await evidence(page, "posts", "reels-tab");
   });
 
-  test("edit post: schedule it, verify status; pinned max is enforced", async ({ page }) => {
+  test("inline editor: schedule a post, verify status; pinned max is enforced", async ({
+    page,
+  }) => {
     await enterDemo(page, "/clients/client-aurelle/posts/post-a4");
-    await page.getByRole("button", { name: "Edit post" }).click();
-    const dialog = page.getByRole("dialog", { name: "Edit post" });
-    await dialog.getByRole("switch", { name: "Schedule" }).click();
-    await dialog.getByLabel("Date").fill("2026-08-05");
-    await dialog.getByLabel("Time").fill("10:30");
-    await dialog.getByRole("button", { name: "Save post" }).click();
+    const editor = page.locator('section[aria-label="Edit post"]');
+    await editor.getByRole("switch", { name: "Schedule" }).click();
+    await editor.getByLabel("Date (DD/MM/YYYY)").fill("05/08/2026");
+    await editor.getByLabel("Time").fill("10:30");
+    await editor.getByRole("button", { name: "Save changes" }).click();
     await expect(page.locator("body")).toContainText("Post updated");
     await expect(page.locator("body")).toContainText("Scheduled");
 
     // Seed has 2 pinned posts; pin this one (3rd, allowed), then check a 4th is blocked.
-    await page.getByRole("button", { name: "Edit post" }).click();
-    await dialog.getByRole("switch", { name: "Pin to profile" }).click();
-    await dialog.getByRole("button", { name: "Save post" }).click();
+    await editor.getByRole("switch", { name: "Pin to profile" }).click();
+    await editor.getByRole("button", { name: "Save changes" }).click();
     await expect(page.locator("body")).toContainText("Post updated");
 
     await page.goto("/clients/client-aurelle/posts/post-a6");
-    await page.getByRole("button", { name: "Edit post" }).click();
-    await expect(dialog.getByRole("switch", { name: "Pin to profile" })).toBeDisabled();
+    await expect(
+      page.locator('section[aria-label="Edit post"]').getByRole("switch", { name: "Pin to profile" }),
+    ).toBeDisabled();
   });
 
   test("delete post removes it from the grid", async ({ page }) => {

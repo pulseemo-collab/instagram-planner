@@ -2,7 +2,14 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { enterDemo, evidence, expectNoHorizontalOverflow, newClientButton, phone } from "./helpers";
+import {
+  enterDemo,
+  enterDemoCalendar,
+  evidence,
+  expectNoHorizontalOverflow,
+  newClientButton,
+  phone,
+} from "./helpers";
 
 test.describe("Mobile experience @mobile", () => {
   test("mobile drawer opens, navigates, and closes @smoke", async ({ page }) => {
@@ -32,6 +39,12 @@ test.describe("Mobile experience @mobile", () => {
       await page.waitForTimeout(400);
       await expectNoHorizontalOverflow(page);
     }
+    // Calendar workspace (needs a selected client; month grid scrolls inside
+    // its own container, the page itself must not).
+    await enterDemoCalendar(page, "client-aurelle");
+    await page.waitForTimeout(400);
+    await expectNoHorizontalOverflow(page);
+    await evidence(page, "mobile", "calendar-mobile");
   });
 
   test("public share page is usable on mobile @smoke", async ({ page }) => {
@@ -68,8 +81,16 @@ test.describe("Tablet viewport", () => {
 test.describe("Accessibility", () => {
   test("axe scan on core routes — record violations", async ({ page }) => {
     const results: Record<string, Array<{ id: string; impact: string | null; nodes: number }>> = {};
-    for (const route of ["/login", "/", "/clients", "/clients/client-aurelle", "/share/demo-aurelle-h3ritage"]) {
+    for (const route of [
+      "/login",
+      "/",
+      "/clients",
+      "/clients/client-aurelle",
+      "/calendar",
+      "/share/demo-aurelle-h3ritage",
+    ]) {
       if (route.startsWith("/share") || route === "/login") await page.goto(route);
+      else if (route === "/calendar") await enterDemoCalendar(page, "client-aurelle");
       else await enterDemo(page, route);
       await page.waitForTimeout(500);
       const scan = await new AxeBuilder({ page })

@@ -6,6 +6,12 @@
 
 export type PostType = "image" | "carousel" | "reel";
 export type PostStatus = "draft" | "scheduled" | "published";
+/**
+ * Lifecycle stage. A designer creates a "content" package (name + original
+ * media only). It becomes a real Instagram "post" only when the scheduler
+ * completes the Create-post step after dropping it on a calendar day.
+ */
+export type ContentStage = "content" | "post";
 export type ApprovalStatus =
   | "not_sent"
   | "awaiting_approval"
@@ -76,6 +82,10 @@ export interface Highlight {
 export interface Post {
   id: string;
   clientId: string;
+  /** Working title of the package, e.g. "Post 1", "Summer campaign 01". */
+  name: string;
+  /** "content" until the scheduler completes Create post. */
+  stage: ContentStage;
   type: PostType;
   caption: string;
   location: string | null;

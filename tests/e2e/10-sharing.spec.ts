@@ -49,14 +49,19 @@ test.describe("Share links & public reviewer flow", () => {
     await expect(page.locator("body")).toContainText(/posts approved/);
     await expect(page.getByRole("button", { name: "Approve all pending" })).toBeDisabled();
 
-    // Creator side sees the result (same browser storage in demo mode).
+    // Creator side sees the result (same browser storage in demo mode): the
+    // inline editor's approval select now reads "approved".
     await enterDemo(page, "/clients/client-aurelle/posts/post-a1");
     await expect(page.locator("body")).toContainText("Approved");
-    await expect(page.getByRole("button", { name: "Mark approved" })).toBeDisabled();
+    await expect(
+      page.locator('section[aria-label="Edit post"]').getByLabel("Approval status"),
+    ).toHaveValue("approved");
   });
 
-  test("creator can resolve reviewer comments; activity feed records events", async ({ page }) => {
-    // Leave a comment publicly first.
+  test("reviewer comments reach the creator's preview and activity feed", async ({ page }) => {
+    // The Feedback card was removed from the calendar/post workspace by
+    // design; comments still flow into the Instagram preview's comment list
+    // and the dashboard activity feed.
     await page.goto("/share/demo-aurelle-h3ritage");
     await page.getByLabel("Name").fill("Rita Reviewer");
     await page.getByLabel("Email").fill("rita@example.com");
@@ -66,14 +71,8 @@ test.describe("Share links & public reviewer flow", () => {
     await expect(page.locator("body")).toContainText("Comment sent");
 
     await enterDemo(page, "/clients/client-aurelle/posts/post-a1");
-    await expect(page.locator("body")).toContainText("One small note on the crop.");
-    await page
-      .locator("li", { hasText: "One small note on the crop." })
-      .getByRole("button", { name: "Mark resolved" })
-      .click();
-    await expect(
-      page.locator("li", { hasText: "One small note on the crop." }).getByText("Resolved"),
-    ).toBeVisible();
+    // Latest comments render inside the Instagram post preview.
+    await expect(page.locator(".ig-root").last()).toContainText("One small note on the crop.");
 
     await page.goto("/");
     await expect(page.locator("body")).toContainText("Rita Reviewer left a comment");

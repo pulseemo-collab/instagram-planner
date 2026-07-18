@@ -194,16 +194,20 @@ URLs.
 
 ## 10. Creating posts
 
-**Where:** workspace → **Posts** panel tab → **New post** (also from `/content`).
+**Where:** the **Calendar → Posts → New post** button (the main workflow), the
+workspace **Posts** panel tab, or `/content`.
 
-Choose the **post type** first (the composer also infers it: multiple files → carousel,
-a video → reel).
+Every post is a **post package** with a required **name** (e.g. *Post 1*, *Product
+launch carousel*) — a name plus the media files is enough to create it; captions and
+everything else can be completed later. Choose the **post type** or let the composer
+infer it (multiple files → carousel, a video → reel).
 
 ### 10.1 Single image post
 
-1. Upload one image.
-2. Write the **caption** (emoji and unicode are fine), **hashtags** (space-separated,
-   the `#` is optional — they are normalized), **location**, **alt text**.
+1. Give the post a **name** and upload one image.
+2. Optionally write the **caption** (emoji and unicode are fine), **hashtags**
+   (space-separated, the `#` is optional — they are normalized), **location**,
+   **alt text**.
 3. Optionally set **approval status**, **pin**, or a **schedule** (below).
 4. **Create post.** The tile appears in the grid immediately.
 
@@ -269,10 +273,18 @@ save), likes count, caption with highlighted hashtags, latest comments, timestam
 ("Scheduled for …" for planned posts), and an add-comment field (your comments are
 stored as creator feedback).
 
-Outside the phone, creator-only panels show the post's status badges, **Edit post**,
-**Delete**, the **Feedback** list (reviewer comments with **Mark resolved**), and
-**Approval** actions (**Send for approval**, **Mark approved**). The URL is
-deep-linkable and refresh-safe.
+Beside the phone sits the **direct inline editor** — the full post-editing form is
+always visible, no "Edit post" button or modal needed. It contains: post name, post
+type, the media manager (add, reorder, remove files), caption, hashtags, location,
+alt text, approval status, pin toggle, and the schedule toggle with date and time.
+The Instagram preview updates **live as you type** (caption, hashtags, name, media);
+press **Save changes** to persist. The toolbar keeps the status badges and **Delete**.
+
+Reviewer feedback no longer appears as a separate card here — the latest reviewer
+comments render inside the Instagram preview itself (as real Instagram comments
+would), and every comment/approval still lands in the dashboard activity feed. The
+full feedback and approval workflow lives on the public share pages, unchanged. The
+URL is deep-linkable and refresh-safe.
 
 ---
 
@@ -290,19 +302,58 @@ Everything you've planned across all clients in one place.
 - **Bulk actions:** tick the checkboxes → a bar appears with **Send for approval**,
   **Mark approved**, and **Delete** for the whole selection, plus "Clear selection".
 
-## 15. Scheduling and the calendar
+## 15. The Calendar workspace
 
-Two ways to schedule:
+**Where:** `/calendar`. The calendar is the main operational workspace for planning
+one client's content end-to-end. It always works with **exactly one client** — there
+is no "all clients" view.
 
-1. **In the composer** — toggle **Schedule**, pick date and time. The post's status
-   becomes *Scheduled*.
-2. **On the calendar** (`/calendar`) — drag any chip between days, or drag a draft up
-   from the **Unscheduled drafts** tray onto a day (it gets 18:00 as a default time;
-   rescheduling an already-scheduled post keeps its time of day).
+### Choosing the client
 
-Calendar features: month navigation with **Today**, a **client filter**, post-type
-icons on each chip, and click-through to the post. All dates use **your local
-timezone** — a post scheduled for 00:15 on the 1st stays on the 1st.
+The first visit shows a **client picker**. Choose whose content you're planning; the
+choice is remembered in your browser, and a **client switcher** stays at the top of
+the page so you can change clients at any moment. Switching swaps both the calendar
+and the Posts section — content from different clients is never mixed, and every post
+you create here automatically belongs to the selected client.
+
+### The intended workflow — Content first, Post later
+
+The calendar separates two things completely: **Content** (what the designer
+uploads) and **Posts** (what the scheduler creates from it).
+
+- **Designer:** selects the client → clicks **Add content** in the **Content**
+  section → enters only a **content name** (e.g. *Post 1* — required) and the
+  original media files. That's the entire dialog — no captions, no types, no
+  scheduling, no metadata. The designer's work ends here. **Files are stored exactly
+  as uploaded**: original bytes, filename, and quality; the app never compresses,
+  resizes, or re-encodes media.
+- **Scheduler:** drags a content card onto a calendar day. This only **attaches the
+  date** — it is still *not* an Instagram post (its chip carries an amber dot). The
+  scheduler then clicks the placed item and lands on the **Create post** screen: the
+  media is already loaded from the content package, the **date is pre-filled** from
+  the drop (shown as **DD/MM/YYYY**, e.g. `21/07/2026`), and the **time is empty**
+  — choosing the publishing time is the scheduler's call. Fill in the post type,
+  caption, hashtags, and the rest, then press **Create post**.
+- **Content manager:** once created, the item is a normal post — reopening it shows
+  **Edit post** with a **Save changes** button, everything editable beside the live
+  Instagram preview (see §13). Opening items from the calendar always shows a
+  **← Calendar** back button that returns to the calendar with your client and
+  month intact; opening from the client workspace keeps the client back-link.
+
+### The Content section
+
+Below the calendar, **Content** lists the selected client's packages — one card per
+package with the name, first-file preview, **file count** (a 3-image package is
+*one* future carousel, not three posts), and status: **Unscheduled** or
+**Scheduled · DD/MM/YYYY**. Placed content **stays in the list**. Filter with
+**All / Unscheduled / Scheduled**. Drag a chip between days to move it, drop it back
+onto the Content section to unschedule, or use the card's **Schedule** button for a
+date dialog (the touch- and keyboard-friendly path — date only; time comes at
+Create post).
+
+Month navigation with **Today** and local-timezone dates (a post scheduled for
+00:15 on the 1st stays on the 1st) carry over. Content packages never appear on the
+Instagram grid, the content library, or dashboard counts until they become posts.
 
 ---
 

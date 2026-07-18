@@ -37,6 +37,31 @@ export function formatRelative(iso: string): string {
   return formatDate(iso);
 }
 
+/** Numeric date in DD/MM/YYYY, e.g. "21/07/2026". */
+export function formatNumericDate(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+/** "dd/mm/yyyy" → internal "yyyy-mm-dd" day key; null when invalid. */
+export function numericToDayKey(text: string): string | null {
+  const match = text.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const [, dd, mm, yyyy] = match;
+  const day = Number(dd);
+  const month = Number(mm);
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+  const date = new Date(Number(yyyy), month - 1, day);
+  if (date.getDate() !== day || date.getMonth() !== month - 1) return null;
+  return `${yyyy}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Internal "yyyy-mm-dd" day key → display "dd/mm/yyyy". */
+export function dayKeyToNumeric(dayKey: string): string {
+  const [y, m, d] = dayKey.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 /** "yyyy-mm-dd" for the LOCAL calendar day of an ISO timestamp. */
 export function localDayKey(iso: string): string {
   const d = new Date(iso);

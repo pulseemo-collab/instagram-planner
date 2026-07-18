@@ -1,30 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, Check, Images, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarClock, Images, Trash2 } from "lucide-react";
 import { InstagramPostDetail } from "@/components/instagram/post-detail";
 import { PhoneFrame } from "@/components/preview/phone-frame";
-import { PostComposer } from "@/components/posts/post-composer";
+import { PostForm, type PostDraft } from "@/components/posts/post-form";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { ApprovalBadge, PostStatusBadge } from "@/components/ui/status-badge";
 import { useToast } from "@/components/ui/toast";
-import { formatDateTime, formatRelative } from "@/lib/dates";
+import { formatDateTime } from "@/lib/dates";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
 import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import type { Post, PostMedia } from "@/types/domain";
 
 export default function PostDetailPage() {
   const params = useParams<{ clientId: string; postId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Opened from the calendar → back returns to the calendar (client + month
+  // state are persisted by the calendar page itself).
+  const fromCalendar = searchParams.get("from") === "calendar";
   const { status, snapshot } = useWorkspace();
   const mutate = useMutate();
   const { toast } = useToast();
 
-  const [editOpen, setEditOpen] = useState(false);
+  const [draft, setDraft] = useState<PostDraft | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
@@ -39,10 +44,36 @@ export default function PostDetailPage() {
     [snapshot, params.postId],
   );
 
+  // The phone renders the unsaved draft live where one exists; otherwise the
+  // stored post.
   const detail = useMemo(() => {
     if (!client || !post || !snapshot) return null;
-    return buildIgPostDetail(client, post, snapshot.media, comments);
-  }, [client, post, snapshot, comments]);
+    const effectivePost: Post = draft
+      ? {
+          ...post,
+          name: draft.name,
+          type: draft.type,
+          caption: draft.caption,
+          hashtags: draft.hashtags,
+          location: draft.location,
+          altText: draft.altText,
+        }
+      : post;
+    const effectiveMedia: PostMedia[] = draft
+      ? draft.media.map((m, index) => ({
+          id: m.id ?? `draft-${index}`,
+          postId: post.id,
+          mediaType: m.mediaType,
+          url: m.previewUrl ?? m.url,
+          thumbnailUrl: m.thumbnailUrl,
+          width: m.width,
+          height: m.height,
+          position: index,
+          createdAt: post.createdAt,
+        }))
+      : snapshot.media;
+    return buildIgPostDetail(client, effectivePost, effectiveMedia, comments);
+  }, [client, post, snapshot, comments, draft]);
 
   if (status === "loading" || status === "idle" || !snapshot) return <PageSkeleton />;
 
@@ -72,18 +103,19 @@ export default function PostDetailPage() {
     }
   }
 
-  const unresolved = comments.filter((c) => !c.resolved);
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         <Link
-          href={`/clients/${client.id}`}
+          href={fromCalendar ? "/calendar" : `/clients/${client.id}`}
           className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium text-ink-soft hover:bg-panel hover:text-ink"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
-          {client.name}
+          {fromCalendar ? "Calendar" : client.name}
         </Link>
+        <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-ink">
+          {post.name || post.caption.slice(0, 40) || "Untitled post"}
+        </h2>
         <PostStatusBadge status={post.status} />
         <ApprovalBadge status={post.approvalStatus} />
         {post.scheduledAt && (
@@ -92,24 +124,22 @@ export default function PostDetailPage() {
             {formatDateTime(post.scheduledAt)}
           </span>
         )}
-        <div className="ml-auto flex gap-2">
-          <Button onClick={() => setEditOpen(true)}>
-            <Pencil className="size-3.5" aria-hidden="true" />
-            Edit post
-          </Button>
+        <div className="ml-auto">
           <Button variant="ghost" onClick={() => setDeleteOpen(true)} aria-label="Delete post">
             <Trash2 className="size-4 text-red-700" aria-hidden="true" />
+            Delete
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
+        {/* Instagram preview — updates live from the editor draft */}
         <div className="flex min-w-0 justify-center lg:sticky lg:top-24 lg:self-start">
           <PhoneFrame theme={client.theme}>
             <InstagramPostDetail
               post={detail}
               theme={client.theme}
-              onBack={() => router.push(`/clients/${client.id}`)}
+              onBack={() => router.push(fromCalendar ? "/calendar" : `/clients/${client.id}`)}
               onSubmitComment={(text) =>
                 void mutate((repo) =>
                   repo.createComment({
@@ -126,88 +156,33 @@ export default function PostDetailPage() {
           </PhoneFrame>
         </div>
 
-        <div className="min-w-0 space-y-4">
-          <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">
-            <h3 className="text-[13.5px] font-semibold tracking-tight text-ink">
-              Feedback{unresolved.length > 0 && ` · ${unresolved.length} open`}
-            </h3>
-            {comments.length === 0 ? (
-              <p className="mt-2 text-[12.5px] text-ink-faint">
-                No comments yet. Reviewer feedback from share links appears here.
-              </p>
-            ) : (
-              <ul className="mt-3 space-y-3">
-                {comments.map((comment) => (
-                  <li key={comment.id} className="rounded-lg border border-line bg-panel-raised p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[12.5px] font-semibold text-ink">{comment.authorName}</span>
-                      {comment.commentType === "change_request" && (
-                        <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10.5px] font-medium text-accent-deep">
-                          Change request
-                        </span>
-                      )}
-                      <span className="ml-auto text-[11px] text-ink-faint">
-                        {formatRelative(comment.createdAt)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[13px] leading-relaxed text-ink">{comment.body}</p>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void mutate((repo) => repo.setCommentResolved(comment.id, !comment.resolved))
-                      }
-                      className={`mt-2 inline-flex items-center gap-1 text-[11.5px] font-medium ${
-                        comment.resolved ? "text-emerald-700" : "text-ink-soft hover:text-ink"
-                      }`}
-                    >
-                      <Check className="size-3" aria-hidden="true" />
-                      {comment.resolved ? "Resolved" : "Mark resolved"}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">
-            <h3 className="text-[13.5px] font-semibold tracking-tight text-ink">Approval</h3>
-            <p className="mt-1 text-[12.5px] text-ink-soft">
-              Update the state after acting on feedback, or resubmit for review.
+        {/* Direct inline editor — no modal required */}
+        <section
+          aria-label={post.stage === "content" ? "Create post" : "Edit post"}
+          className="min-w-0 rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5"
+        >
+          <h3 className="mb-4 text-[13.5px] font-semibold tracking-tight text-ink">
+            {post.stage === "content" ? "Create post" : "Edit post"}
+          </h3>
+          {post.stage === "content" && (
+            <p className="-mt-3 mb-4 text-[12px] leading-relaxed text-ink-faint">
+              This content package isn&apos;t an Instagram post yet — complete the details
+              below and choose the publishing time.
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                onClick={async () => {
-                  await mutate((repo) => repo.updatePost(post.id, { approvalStatus: "awaiting_approval" }));
-                  toast("Marked as awaiting approval");
-                }}
-                disabled={post.approvalStatus === "awaiting_approval"}
-              >
-                Send for approval
-              </Button>
-              <Button
-                size="sm"
-                onClick={async () => {
-                  await mutate((repo) => repo.updatePost(post.id, { approvalStatus: "approved" }));
-                  toast("Marked approved");
-                }}
-                disabled={post.approvalStatus === "approved"}
-              >
-                Mark approved
-              </Button>
-            </div>
-          </section>
-        </div>
+          )}
+          <PostForm
+            key={post.id}
+            clientId={client.id}
+            post={post}
+            existingMedia={snapshot.media.filter((m) => m.postId === post.id)}
+            clientPosts={snapshot.posts.filter((p) => p.clientId === client.id)}
+            variant="inline"
+            onSaved={() => setDraft(null)}
+            onDraftChange={setDraft}
+          />
+        </section>
       </div>
 
-      <PostComposer
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        clientId={client.id}
-        post={post}
-        existingMedia={snapshot.media.filter((m) => m.postId === post.id)}
-        clientPosts={snapshot.posts.filter((p) => p.clientId === client.id)}
-      />
       <ConfirmDialog
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
