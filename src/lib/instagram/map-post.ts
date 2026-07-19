@@ -8,6 +8,8 @@ export interface IgPostMediaItem {
   mediaType: "image" | "video";
   imageUrl?: string;
   videoUrl?: string;
+  /** Cover image shown as the video poster before playback starts. */
+  posterUrl?: string;
   art: IgPlaceholderArt;
 }
 
@@ -56,6 +58,7 @@ export function buildIgPostDetail(
       mediaType: m.mediaType,
       imageUrl: isRealVideo ? undefined : ref.imageUrl,
       videoUrl: isRealVideo ? m.url : undefined,
+      posterUrl: isRealVideo ? parseMediaRef(m.thumbnailUrl).imageUrl : undefined,
       art: parseMediaRef(m.thumbnailUrl ?? m.url).art,
     };
   });

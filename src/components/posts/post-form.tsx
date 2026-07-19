@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, X } from "lucide-react";
 import { MediaArt } from "@/components/instagram/media-art";
 import { Button } from "@/components/ui/button";
 import { SelectField, TextAreaField, TextField, ToggleField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { UploadDropzone, type UploadedItem } from "@/components/uploads/upload-dropzone";
+import { VideoCoverPicker, type CoverSelection } from "@/components/posts/video-cover-picker";
 import {
   dayKeyToNumeric,
   isoFromLocalParts,
@@ -18,6 +19,7 @@ import { useMutate } from "@/lib/store/hooks";
 import {
   MAX_PINNED_POSTS,
   type ApprovalStatus,
+  type CoverSource,
   type Post,
   type PostMedia,
   type PostType,
@@ -28,10 +30,16 @@ export interface MediaDraft {
   mediaType: "image" | "video";
   url: string;
   thumbnailUrl: string | null;
+  /** How the video cover in thumbnailUrl was chosen (videos only). */
+  coverSource?: CoverSource | null;
+  /** Video timestamp (seconds) of a generated/frame cover. */
+  coverTimestamp?: number | null;
   width: number | null;
   height: number | null;
   /** Transient object URL for a just-uploaded file (not persisted). */
   previewUrl?: string;
+  /** Transient displayable URL for a just-selected cover (not persisted). */
+  coverPreviewUrl?: string;
 }
 
 /** Live editing state emitted for instant Instagram-preview updates. */
@@ -103,6 +111,8 @@ export function PostForm({
           mediaType: m.mediaType,
           url: m.url,
           thumbnailUrl: m.thumbnailUrl,
+          coverSource: m.coverSource ?? null,
+          coverTimestamp: m.coverTimestamp ?? null,
           width: m.width,
           height: m.height,
         }));
@@ -149,8 +159,16 @@ export function PostForm({
     [clientPosts, post],
   );
 
-  function emitDraft(patch: Partial<PostDraft>) {
-    onDraftChange?.({
+  // Live-preview draft sync. The parent's setState must NEVER run while this
+  // component renders (React "setState during render" error), so the draft is
+  // emitted from an effect that fires after commit whenever form state
+  // changes — never from render or from inside a state-updater callback.
+  const draftChangeRef = useRef(onDraftChange);
+  useEffect(() => {
+    draftChangeRef.current = onDraftChange;
+  });
+  useEffect(() => {
+    draftChangeRef.current?.({
       name,
       type,
       caption,
@@ -158,9 +176,8 @@ export function PostForm({
       location: location.trim() || null,
       altText: altText.trim() || null,
       media,
-      ...patch,
     });
-  }
+  }, [name, type, caption, hashtagsText, location, altText, media]);
 
   function addUploads(items: UploadedItem[]) {
     setMedia((current) => {
@@ -178,7 +195,6 @@ export function PostForm({
       // Sensible type inference as media changes.
       if (next.length > 1 && type === "image") setType("carousel");
       if (next.length === 1 && next[0].mediaType === "video") setType("reel");
-      emitDraft({ media: next });
       return next;
     });
   }
@@ -189,7 +205,6 @@ export function PostForm({
       if (target < 0 || target >= current.length) return current;
       const next = [...current];
       [next[index], next[target]] = [next[target], next[index]];
-      emitDraft({ media: next });
       return next;
     });
   }
@@ -240,6 +255,8 @@ export function PostForm({
       mediaType: m.mediaType,
       url: m.url,
       thumbnailUrl: m.thumbnailUrl,
+      coverSource: m.coverSource ?? null,
+      coverTimestamp: m.coverTimestamp ?? null,
       width: m.width,
       height: m.height,
       position: index,
@@ -317,25 +334,46 @@ export function PostForm({
   const isReel = type === "reel";
   const coverRef = isReel && media[0] ? parseMediaRef(media[0].thumbnailUrl ?? media[0].url) : null;
 
+  // The Video cover section applies whenever the PRIMARY media is a real,
+  // decodable video (reel, or a carousel that begins with a video). Seed
+  // placeholders (`gradient:`) have nothing to decode.
+  const primary = media[0];
+  const primaryVideoSrc =
+    primary?.mediaType === "video"
+      ? (primary.previewUrl ??
+        (/^(https?:|data:|blob:)/.test(primary.url) ? primary.url : null))
+      : null;
+
+  function applyCover(selection: CoverSelection) {
+    setMedia((current) => {
+      if (current.length === 0) return current;
+      const next = [
+        {
+          ...current[0],
+          thumbnailUrl: selection.url,
+          coverSource: selection.source,
+          coverTimestamp: selection.timestamp,
+          coverPreviewUrl: selection.previewUrl,
+        },
+        ...current.slice(1),
+      ];
+      return next;
+    });
+  }
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <TextField
           label="Post name"
           value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            emitDraft({ name: e.target.value });
-          }}
+          onChange={(e) => setName(e.target.value)}
           placeholder="Post 1"
         />
         <SelectField
           label="Post type"
           value={type}
-          onChange={(e) => {
-            setType(e.target.value as PostType);
-            emitDraft({ type: e.target.value as PostType });
-          }}
+          onChange={(e) => setType(e.target.value as PostType)}
         >
           <option value="image">Single image</option>
           <option value="carousel">Carousel</option>
@@ -393,11 +431,7 @@ export function PostForm({
                       type="button"
                       aria-label={`Remove slide ${index + 1}`}
                       onClick={() =>
-                        setMedia((current) => {
-                          const next = current.filter((_, i) => i !== index);
-                          emitDraft({ media: next });
-                          return next;
-                        })
+                        setMedia((current) => current.filter((_, i) => i !== index))
                       }
                       className="flex size-6 items-center justify-center rounded bg-black/40 text-white"
                     >
@@ -417,7 +451,20 @@ export function PostForm({
         />
       </div>
 
-      {isReel && (
+      {primaryVideoSrc && primary && (
+        <VideoCoverPicker
+          videoUrl={primaryVideoSrc}
+          coverDisplayUrl={
+            primary.coverPreviewUrl ?? parseMediaRef(primary.thumbnailUrl).imageUrl ?? null
+          }
+          // Legacy covers uploaded before cover tracking count as custom images.
+          coverSource={primary.coverSource ?? (primary.thumbnailUrl ? "uploaded" : null)}
+          coverTimestamp={primary.coverTimestamp ?? null}
+          onCoverSelected={applyCover}
+        />
+      )}
+
+      {isReel && !primaryVideoSrc && (
         <div className="space-y-1.5">
           <span className="block text-[12.5px] font-medium text-ink">Reel cover</span>
           <div className="flex items-center gap-3">
@@ -458,37 +505,25 @@ export function PostForm({
       <TextAreaField
         label="Caption"
         value={caption}
-        onChange={(e) => {
-          setCaption(e.target.value);
-          emitDraft({ caption: e.target.value });
-        }}
+        onChange={(e) => setCaption(e.target.value)}
       />
       <TextField
         label="Hashtags"
         hint="Space-separated; # optional."
         value={hashtagsText}
-        onChange={(e) => {
-          setHashtagsText(e.target.value);
-          emitDraft({ hashtags: textToHashtags(e.target.value) });
-        }}
+        onChange={(e) => setHashtagsText(e.target.value)}
         placeholder="#finejewelry #atelier"
       />
       <div className="grid grid-cols-2 gap-3">
         <TextField
           label="Location"
           value={location}
-          onChange={(e) => {
-            setLocation(e.target.value);
-            emitDraft({ location: e.target.value.trim() || null });
-          }}
+          onChange={(e) => setLocation(e.target.value)}
         />
         <TextField
           label="Alt text"
           value={altText}
-          onChange={(e) => {
-            setAltText(e.target.value);
-            emitDraft({ altText: e.target.value.trim() || null });
-          }}
+          onChange={(e) => setAltText(e.target.value)}
         />
       </div>
 

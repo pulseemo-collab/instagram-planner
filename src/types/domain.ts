@@ -20,6 +20,12 @@ export type ApprovalStatus =
 export type Theme = "light" | "dark";
 export type AccountType = "personal" | "creator" | "business";
 export type MediaType = "image" | "video";
+/**
+ * How a video's cover image (stored in `thumbnailUrl`) was produced:
+ * an auto-generated default frame, a frame the scheduler picked in the
+ * player, or a custom uploaded image.
+ */
+export type CoverSource = "generated" | "frame" | "uploaded";
 export type CommentType = "general" | "change_request";
 export type ActivityType =
   | "client_created"
@@ -110,6 +116,10 @@ export interface PostMedia {
   /** `data:`/`blob:`/`https:` URL, `local:<id>` demo reference, or `gradient:` placeholder. */
   url: string;
   thumbnailUrl: string | null;
+  /** Set on video media whose thumbnailUrl is a chosen cover; null/absent otherwise. */
+  coverSource?: CoverSource | null;
+  /** Source-video timestamp in seconds for generated/frame covers. */
+  coverTimestamp?: number | null;
   width: number | null;
   height: number | null;
   position: number;

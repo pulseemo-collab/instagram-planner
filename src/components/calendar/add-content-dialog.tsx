@@ -166,7 +166,7 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
               })}
             </ul>
           )}
-          <UploadDropzone bucket="post-media" allowVideo multiple onUploaded={addUploads} />
+          <UploadDropzone bucket="post-media" allowVideo multiple allowFolders onUploaded={addUploads} />
         </div>
 
         {error && (

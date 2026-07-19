@@ -94,8 +94,11 @@ test.describe("Uploads & post creation", () => {
     await dialog.getByLabel("Post type").selectOption("reel");
     await dialog.locator('input[type="file"]').first().setInputFiles(paths.asset("clip.webm"));
     await expect(dialog.getByText("clip.webm")).toBeVisible();
-    // Upload the reel cover (second dropzone).
+    // Upload a custom cover through the Video cover section's Upload tab.
+    await expect(dialog.getByText("Video cover")).toBeVisible();
+    await dialog.getByRole("radio", { name: "Upload image" }).click();
     await dialog.locator('input[type="file"]').nth(1).setInputFiles(paths.asset("cover.png"));
+    await expect(dialog.getByText("Custom uploaded image")).toBeVisible();
     await dialog.getByLabel("Post name").fill("Reel test");
     await dialog.getByLabel("Caption").fill("Reel test");
     await dialog.getByRole("button", { name: "Create post" }).click();

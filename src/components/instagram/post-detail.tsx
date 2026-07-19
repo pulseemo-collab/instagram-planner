@@ -113,6 +113,7 @@ export function PostMediaViewer({
         <video
           key={item.id}
           src={item.videoUrl}
+          poster={item.posterUrl}
           className="absolute inset-0 h-full w-full object-cover"
           controls
           playsInline

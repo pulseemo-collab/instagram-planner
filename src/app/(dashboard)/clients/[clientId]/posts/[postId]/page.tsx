@@ -65,7 +65,7 @@ export default function PostDetailPage() {
           postId: post.id,
           mediaType: m.mediaType,
           url: m.previewUrl ?? m.url,
-          thumbnailUrl: m.thumbnailUrl,
+          thumbnailUrl: m.coverPreviewUrl ?? m.thumbnailUrl,
           width: m.width,
           height: m.height,
           position: index,

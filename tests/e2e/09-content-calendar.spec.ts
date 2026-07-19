@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import { enterDemo, enterDemoCalendar, evidence, paths } from "./helpers";
+import { enterDemo, enterDemoCalendar, evidence, paths, phone } from "./helpers";
 
 test.describe("Content page", () => {
   test("filters narrow results; combined filters and clear work", async ({ page }) => {
@@ -91,9 +91,11 @@ test.describe("Calendar workspace", () => {
     await page.getByRole("button", { name: "Add content" }).first().click();
     const dialog = page.getByRole("dialog", { name: "Add content" });
 
-    // Exactly the designer fields — nothing else.
+    // Exactly the designer fields — nothing else. Two pickers: files + folder.
     await expect(dialog.getByLabel("Content name")).toBeVisible();
-    await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(2);
+    await expect(dialog.getByLabel("Choose files")).toHaveCount(1);
+    await expect(dialog.getByLabel("Choose folder")).toHaveCount(1);
     for (const absent of [
       "Caption",
       "Hashtags",
@@ -353,6 +355,108 @@ test.describe("Calendar workspace", () => {
 
     await page.getByRole("radio", { name: "All" }).click();
     await expect.poll(() => contentCards(page).count()).toBe(2);
+  });
+
+  test("FOLDER IMPORT: recursive, hidden/system and unsupported files skipped @smoke", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+
+    // campaign-folder: 01-cover.png + 02-detail.jpg + nested/03-extra.png
+    // + notes.txt (unsupported) + .DS_Store/Thumbs.db/desktop.ini (system).
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("campaign-folder"));
+    await expect(dialog.getByRole("status")).toHaveText(
+      "3 files added, 1 unsupported file skipped.",
+    );
+    await expect(dialog.getByText("01-cover.png")).toBeVisible();
+    await expect(dialog.getByText("03-extra.png")).toBeVisible(); // nested subfolder
+    for (const skipped of ["notes.txt", ".DS_Store", "Thumbs.db", "desktop.ini"]) {
+      await expect(dialog.getByText(skipped)).toHaveCount(0);
+    }
+
+    // Everything lands in ONE content package.
+    await dialog.getByLabel("Content name").fill("Folder shoot");
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(page.locator("body")).toContainText("Content added");
+    const card = contentCards(page).filter({ hasText: "Folder shoot" });
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText("3 files");
+    await evidence(page, "calendar", "folder-import");
+  });
+
+  test("FOLDER IMPORT: exact duplicates are skipped on re-import", async ({ page }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("campaign-folder"));
+    await expect(dialog.getByRole("status")).toHaveText(
+      "3 files added, 1 unsupported file skipped.",
+    );
+    // Same folder again — nothing new gets in.
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("campaign-folder"));
+    await expect(dialog.getByRole("status")).toHaveText(
+      "0 files added, 1 unsupported file skipped, 3 duplicates skipped.",
+    );
+    // A duplicate via the plain file picker is skipped too.
+    await dialog.getByLabel("Choose files").setInputFiles(
+      paths.asset("campaign-folder/01-cover.png"),
+    );
+    await expect(dialog.getByRole("status")).toHaveText("0 files added, 1 duplicate skipped.");
+
+    await dialog.getByLabel("Content name").fill("Dedupe check");
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(page.locator("body")).toContainText("Content added");
+    await expect(contentCards(page).filter({ hasText: "Dedupe check" })).toContainText("3 files");
+  });
+
+  test("FOLDER IMPORT: folder without supported media shows a clear error", async ({ page }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("unsupported-folder"));
+    await expect(dialog.getByRole("status")).toHaveText(
+      "No supported files found in that folder.",
+    );
+    await dialog.getByLabel("Content name").fill("Empty import");
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(dialog.getByText("Upload at least one photo or video.")).toBeVisible();
+  });
+
+  test("FOLDER IMPORT: deterministic order + original bytes; reorder controls survive", async ({
+    page,
+  }) => {
+    await enterDemoCalendar(page, "client-kavo");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("campaign-folder"));
+    await expect(dialog.getByRole("status")).toHaveText(
+      "3 files added, 1 unsupported file skipped.",
+    );
+    await dialog.getByLabel("Content name").fill("Ordered shoot");
+    await dialog.getByRole("button", { name: "Add content" }).click();
+    await expect(page.locator("body")).toContainText("Content added");
+
+    await contentCards(page)
+      .filter({ hasText: "Ordered shoot" })
+      .getByRole("button", { name: /Open/ })
+      .click();
+    await expect(page).toHaveURL(/\/posts\//);
+
+    // Slide 1 = relative-path order (01-cover.png) with byte-identical content.
+    await expect(phone(page)).toContainText("1/3");
+    const src = await page.locator(".ig-root img").first().getAttribute("src");
+    expect(src).toMatch(/^data:image\/png;base64,/);
+    expect(src!.split(",")[1]).toBe(
+      fs.readFileSync(paths.asset("campaign-folder/01-cover.png")).toString("base64"),
+    );
+
+    // The existing manual media reorder controls are still there.
+    const editor = page.locator('section[aria-label="Create post"]');
+    await expect(editor.getByRole("button", { name: "Move slide 2 left" })).toBeVisible();
   });
 
   test("editing date/time inline (DD/MM/YYYY) updates the calendar without UTC shift", async ({

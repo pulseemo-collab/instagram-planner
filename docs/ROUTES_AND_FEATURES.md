@@ -36,6 +36,10 @@ Access levels: **Public** (no session), **Session** (demo session or Supabase lo
 - **Uploads:** drag-drop + picker, multi-file, JPG/PNG/WEBP (+ MP4/WebM/MOV for
   reels), size/type validation, progress, retry, remove-before-save. Demo = data URLs
   in IndexedDB; live = Supabase Storage buckets `avatars`, `highlights`, `post-media`.
+  The calendar's **Add content** dropzone additionally accepts **folders** (drop or
+  Choose folder / `webkitdirectory`): recursive import in path order, hidden/system
+  files ignored, unsupported files skipped with an announced summary, exact
+  duplicates prevented — the folder itself is never stored.
 - **Approvals:** per-post approve / changes-requested / comment, approve-all, resolve
   comments, roll-ups on dashboard cards and client list, activity records.
 - **Feature flags:** none. The only behavioral switch is Supabase env presence.

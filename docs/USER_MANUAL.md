@@ -327,6 +327,15 @@ uploads) and **Posts** (what the scheduler creates from it).
   scheduling, no metadata. The designer's work ends here. **Files are stored exactly
   as uploaded**: original bytes, filename, and quality; the app never compresses,
   resizes, or re-encodes media.
+  - Media can be added as individual files (**Choose files** or drag-and-drop) or
+    as a whole **folder** (**Choose folder**, or drop a folder onto the dropzone in
+    Chromium-based browsers). Folders are read recursively — nested subfolders
+    included — and every supported file (JPG, PNG, WEBP, MP4, WebM) joins the same
+    content package in folder-path order. Hidden/system files (`.DS_Store`,
+    `Thumbs.db`, `desktop.ini`) are ignored, unsupported files are skipped without
+    failing the import, and exact duplicates are never added twice. A status line
+    summarises every import, e.g. *“12 files added, 2 unsupported files skipped.”*
+    A folder is only an input method — nothing folder-shaped is stored.
 - **Scheduler:** drags a content card onto a calendar day. This only **attaches the
   date** — it is still *not* an Instagram post (its chip carries an amber dot). The
   scheduler then clicks the placed item and lands on the **Create post** screen: the

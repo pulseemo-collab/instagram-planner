@@ -8,6 +8,7 @@ import {
   evidence,
   expectNoHorizontalOverflow,
   newClientButton,
+  paths,
   phone,
 } from "./helpers";
 
@@ -113,6 +114,21 @@ test.describe("Accessibility", () => {
       violations.map((v) => `${route}: ${v.id} (${v.impact}, ${v.nodes} nodes)`),
     );
     expect(all, "axe violations").toEqual([]);
+  });
+
+  test("axe scan with the Add content dialog open (file + folder pickers)", async ({ page }) => {
+    await enterDemoCalendar(page, "client-aurelle");
+    await page.getByRole("button", { name: "Add content" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Add content" });
+    await expect(dialog).toBeVisible();
+    // Scan with imported rows + the announced summary rendered too.
+    await dialog.getByLabel("Choose folder").setInputFiles(paths.asset("campaign-folder"));
+    await expect(dialog.getByRole("status")).toContainText("3 files added");
+    const scan = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    expect(
+      scan.violations.map((v) => `${v.id} (${v.impact}, ${v.nodes.length} nodes)`),
+      "axe violations with Add content dialog open",
+    ).toEqual([]);
   });
 
   test("dialogs close on Escape and keep focus inside the app", async ({ page }) => {

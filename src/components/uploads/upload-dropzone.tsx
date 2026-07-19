@@ -1,11 +1,18 @@
 "use client";
 
 import { useCallback, useRef, useState, type DragEvent } from "react";
-import { CircleAlert, RotateCw, UploadCloud, X } from "lucide-react";
+import { CircleAlert, FolderOpen, RotateCw, UploadCloud, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { createId } from "@/lib/id";
 import { getRepository } from "@/lib/repositories";
-import { validateUpload } from "@/lib/uploads";
+import {
+  collectDirectoryInputFiles,
+  collectDroppedEntries,
+  collectPlainFiles,
+  duplicateKey,
+  validateUpload,
+  type CollectedFile,
+} from "@/lib/uploads";
 
 export interface UploadedItem {
   key: string;
@@ -27,15 +34,32 @@ interface PendingItem {
   progress: number;
   status: "uploading" | "error" | "done";
   error?: string;
+  /** Duplicate-prevention identity (folders mode). */
+  dupKey?: string;
+}
+
+interface ImportNotice {
+  text: string;
+  isError: boolean;
 }
 
 export interface UploadDropzoneProps {
   bucket: "avatars" | "highlights" | "post-media";
   allowVideo?: boolean;
   multiple?: boolean;
+  /**
+   * Accept dropped folders (recursive import) and show a "Choose folder"
+   * picker. Also enables exact-duplicate skipping and sequential uploads so
+   * import order stays deterministic (relative path + filename).
+   */
+  allowFolders?: boolean;
   label?: string;
   onUploaded: (items: UploadedItem[]) => void;
   className?: string;
+}
+
+function plural(count: number, singular: string, pluralWord = `${singular}s`): string {
+  return count === 1 ? singular : pluralWord;
 }
 
 /**
@@ -46,13 +70,16 @@ export function UploadDropzone({
   bucket,
   allowVideo = false,
   multiple = true,
+  allowFolders = false,
   label,
   onUploaded,
   className,
 }: UploadDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const seenKeysRef = useRef<Set<string>>(new Set());
   const [items, setItems] = useState<PendingItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [notice, setNotice] = useState<ImportNotice | null>(null);
 
   const patchItem = useCallback((key: string, patch: Partial<PendingItem>) => {
     setItems((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
@@ -111,9 +138,90 @@ export function UploadDropzone({
     [allowVideo, multiple, startUpload],
   );
 
+  /**
+   * Folders-mode pipeline: validate each discovered file individually, skip
+   * exact duplicates, silently skip unsupported files inside folder imports
+   * (they never fail the whole folder), then upload sequentially so the
+   * package keeps the deterministic path+filename order.
+   */
+  const ingestCollected = useCallback(
+    async (collected: CollectedFile[], fromFolder: boolean) => {
+      const accepted: PendingItem[] = [];
+      const rows: PendingItem[] = [];
+      let added = 0;
+      let unsupportedSkipped = 0;
+      let duplicates = 0;
+
+      for (const { file } of collected) {
+        const dupKey = duplicateKey(file);
+        if (seenKeysRef.current.has(dupKey)) {
+          duplicates += 1;
+          continue;
+        }
+        const validation = validateUpload(file, allowVideo);
+        if (!validation.ok && validation.reason === "type" && fromFolder) {
+          unsupportedSkipped += 1;
+          continue;
+        }
+        const pending: PendingItem = {
+          key: createId(),
+          file,
+          dupKey,
+          mediaType: validation.mediaType,
+          previewUrl: URL.createObjectURL(file),
+          progress: 0,
+          status: validation.ok ? "uploading" : "error",
+          error: validation.error,
+        };
+        rows.push(pending);
+        if (validation.ok) {
+          seenKeysRef.current.add(dupKey);
+          accepted.push(pending);
+          added += 1;
+        }
+      }
+
+      if (rows.length > 0) setItems((current) => [...current, ...rows]);
+
+      if (fromFolder && added === 0 && duplicates === 0) {
+        setNotice({ text: "No supported files found in that folder.", isError: true });
+      } else {
+        const parts = [`${added} ${plural(added, "file")} added`];
+        if (unsupportedSkipped > 0) {
+          parts.push(`${unsupportedSkipped} unsupported ${plural(unsupportedSkipped, "file")} skipped`);
+        }
+        if (duplicates > 0) parts.push(`${duplicates} ${plural(duplicates, "duplicate")} skipped`);
+        setNotice({ text: `${parts.join(", ")}.`, isError: added === 0 });
+      }
+
+      for (const pending of accepted) await startUpload(pending);
+    },
+    [allowVideo, startUpload],
+  );
+
   function onDrop(event: DragEvent) {
     event.preventDefault();
     setDragActive(false);
+    if (allowFolders) {
+      // Entries must be captured synchronously — the DataTransfer is only
+      // valid during the event. The recursive read happens afterwards.
+      const dtItems = Array.from(event.dataTransfer.items ?? []);
+      const entries = dtItems.map((item) =>
+        typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null,
+      );
+      if (entries.some(Boolean)) {
+        const hasDirectory = entries.some((entry) => entry?.isDirectory);
+        void collectDroppedEntries(entries).then((collected) =>
+          ingestCollected(collected, hasDirectory),
+        );
+        return;
+      }
+      // Progressive enhancement: no entry API → plain file drop.
+      if (event.dataTransfer.files.length) {
+        void ingestCollected(collectPlainFiles(event.dataTransfer.files), false);
+      }
+      return;
+    }
     if (event.dataTransfer.files.length) acceptFiles(event.dataTransfer.files);
   }
 
@@ -124,45 +232,117 @@ export function UploadDropzone({
     ...(allowVideo ? ["video/mp4", "video/webm", "video/quicktime"] : []),
   ].join(",");
 
+  const dropzoneClass = cn(
+    "flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent",
+    dragActive
+      ? "border-accent bg-accent-soft/60"
+      : "border-line-strong bg-panel-raised hover:border-ink-faint",
+  );
+
+  const formatsLine = (
+    <p className="text-[11.5px] text-ink-faint">
+      JPG, PNG, WEBP{allowVideo ? " · MP4/WebM for reels" : ""}
+    </p>
+  );
+
   return (
     <div className={className}>
-      {/* A <label> wrapper gives the file input its accessible name and
-          activates it natively on click — no nested interactive roles
-          (fixes audit BUG-003: axe `label` + `nested-interactive`). */}
-      <label
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={onDrop}
-        className={cn(
-          "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent",
-          dragActive
-            ? "border-accent bg-accent-soft/60"
-            : "border-line-strong bg-panel-raised hover:border-ink-faint",
-        )}
-      >
-        <UploadCloud className="size-5 text-ink-faint" aria-hidden="true" />
-        <p className="text-[13px] font-medium text-ink">
-          {label ?? (multiple ? "Drop files or click to browse" : "Drop a file or click to browse")}
-        </p>
-        <p className="text-[11.5px] text-ink-faint">
-          JPG, PNG, WEBP{allowVideo ? " · MP4/WebM for reels" : ""}
-        </p>
-        <input
-          ref={inputRef}
-          type="file"
-          accept={accept}
-          multiple={multiple}
-          aria-label={label ?? "Upload files"}
-          className="sr-only"
-          onChange={(e) => {
-            if (e.target.files?.length) acceptFiles(e.target.files);
-            e.target.value = "";
+      {allowFolders ? (
+        // Folders mode: the surface accepts file AND folder drops; two
+        // label-wrapped pickers keep the inputs accessibly named without
+        // nested interactive roles.
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
           }}
-        />
-      </label>
+          onDragLeave={() => setDragActive(false)}
+          onDrop={onDrop}
+          className={dropzoneClass}
+        >
+          <UploadCloud className="size-5 text-ink-faint" aria-hidden="true" />
+          <p className="text-[13px] font-medium text-ink">{label ?? "Drop files or folders here"}</p>
+          {formatsLine}
+          <div className="mt-1.5 flex flex-wrap items-center justify-center gap-2">
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-panel px-3 py-1.5 text-[12.5px] font-medium text-ink transition-colors hover:border-ink-faint focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent">
+              <UploadCloud className="size-3.5 text-ink-faint" aria-hidden="true" />
+              Choose files
+              <input
+                ref={inputRef}
+                type="file"
+                accept={accept}
+                multiple
+                aria-label="Choose files"
+                className="sr-only"
+                onChange={(e) => {
+                  if (e.target.files?.length) void ingestCollected(collectPlainFiles(e.target.files), false);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-panel px-3 py-1.5 text-[12.5px] font-medium text-ink transition-colors hover:border-ink-faint focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent">
+              <FolderOpen className="size-3.5 text-ink-faint" aria-hidden="true" />
+              Choose folder
+              <input
+                type="file"
+                aria-label="Choose folder"
+                className="sr-only"
+                {...({ webkitdirectory: "" } as Record<string, string>)}
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void ingestCollected(collectDirectoryInputFiles(e.target.files), true);
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      ) : (
+        /* A <label> wrapper gives the file input its accessible name and
+           activates it natively on click — no nested interactive roles
+           (fixes audit BUG-003: axe `label` + `nested-interactive`). */
+        <label
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={onDrop}
+          className={cn(dropzoneClass, "cursor-pointer")}
+        >
+          <UploadCloud className="size-5 text-ink-faint" aria-hidden="true" />
+          <p className="text-[13px] font-medium text-ink">
+            {label ?? (multiple ? "Drop files or click to browse" : "Drop a file or click to browse")}
+          </p>
+          {formatsLine}
+          <input
+            ref={inputRef}
+            type="file"
+            accept={accept}
+            multiple={multiple}
+            aria-label={label ?? "Upload files"}
+            className="sr-only"
+            onChange={(e) => {
+              if (e.target.files?.length) acceptFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      )}
+
+      {allowFolders && (
+        <p
+          role="status"
+          aria-live="polite"
+          className={cn(
+            "mt-2 min-h-4 text-[12px]",
+            notice ? (notice.isError ? "text-red-700" : "text-ink-soft") : "text-ink-soft",
+          )}
+        >
+          {notice?.text}
+        </p>
+      )}
 
       {items.length > 0 && (
         <ul className="mt-3 space-y-2">
@@ -209,7 +389,10 @@ export function UploadDropzone({
               <button
                 type="button"
                 aria-label={`Remove ${item.file.name}`}
-                onClick={() => setItems((current) => current.filter((i) => i.key !== item.key))}
+                onClick={() => {
+                  if (item.dupKey) seenKeysRef.current.delete(item.dupKey);
+                  setItems((current) => current.filter((i) => i.key !== item.key));
+                }}
                 className="flex size-7 shrink-0 items-center justify-center rounded text-ink-soft hover:bg-canvas hover:text-ink"
               >
                 <X className="size-3.5" aria-hidden="true" />

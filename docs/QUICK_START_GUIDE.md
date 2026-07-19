@@ -35,8 +35,11 @@ clients are pre-loaded so you can explore immediately.
 Open **Calendar**, pick the client, and click **Add content** in the **Content**
 section. The dialog asks for exactly two things: a **content name** (e.g. *Post 1*)
 and the **original media files** — one image, several images (one future carousel),
-or a video. No captions, no scheduling: the designer's job ends here. Files are
-stored **exactly as uploaded** — original bytes, filename, quality.
+or a video. You can pick individual files, **drop a whole folder**, or use
+**Choose folder**: subfolders are read recursively, unsupported and hidden system
+files are skipped, and duplicates are never added twice. No captions, no
+scheduling: the designer's job ends here. Files are stored **exactly as
+uploaded** — original bytes, filename, quality.
 
 ## 5. Schedule & create the post (scheduler)
 
