@@ -8,6 +8,7 @@ import {
 } from "@/lib/idb";
 import type {
   Activity,
+  AppNotification,
   Approval,
   Client,
   ClientBundle,
@@ -64,10 +65,33 @@ export class DemoRepository implements Repository {
 
   private state: WorkspaceSnapshot | null = null;
   private mediaUrlCache = new Map<string, string>();
+  private channel: BroadcastChannel | null = null;
+
+  constructor() {
+    // Cross-tab "realtime": other tabs announce persisted changes; drop the
+    // in-memory cache so the next loadSnapshot re-reads IndexedDB.
+    try {
+      this.channel = new BroadcastChannel("gridline-workspace");
+      this.channel.onmessage = () => {
+        this.state = null;
+      };
+    } catch {
+      this.channel = null;
+    }
+  }
+
+  private broadcast(): void {
+    try {
+      this.channel?.postMessage("changed");
+    } catch {
+      // channel closed or unsupported — refresh-on-focus still covers it
+    }
+  }
 
   private async ensureState(): Promise<WorkspaceSnapshot> {
     if (this.state) return this.state;
     const stored = await idbGetState<WorkspaceSnapshot>();
+    if (stored && !Array.isArray(stored.notifications)) stored.notifications = [];
     this.state = stored ?? createSeedSnapshot();
     if (!stored) await idbPutState(this.state);
     return this.state;
@@ -165,6 +189,7 @@ export class DemoRepository implements Repository {
     state.approvals = state.approvals.filter((a) => a.clientId !== id);
     state.shareLinks = state.shareLinks.filter((s) => s.clientId !== id);
     state.activity = state.activity.filter((a) => a.clientId !== id);
+    state.notifications = state.notifications.filter((n) => n.clientId !== id);
     await this.persist();
   }
 
@@ -275,6 +300,7 @@ export class DemoRepository implements Repository {
     state.media = state.media.filter((m) => m.postId !== id);
     state.comments = state.comments.filter((c) => c.postId !== id);
     state.approvals = state.approvals.filter((a) => a.postId !== id);
+    state.notifications = state.notifications.filter((n) => n.postId !== id);
     if (post) this.touchClient(post.clientId);
     await this.persist();
   }
@@ -303,17 +329,9 @@ export class DemoRepository implements Repository {
   ): Promise<Approval> {
     const state = await this.ensureState();
     const timestamp = now();
-    const existing = state.approvals.find(
-      (a) => a.postId === input.postId && a.reviewerEmail === input.reviewerEmail,
-    );
-    let approval: Approval;
-    if (existing) {
-      Object.assign(existing, input, { updatedAt: timestamp });
-      approval = existing;
-    } else {
-      approval = { ...input, id: createId(), createdAt: timestamp, updatedAt: timestamp };
-      state.approvals.push(approval);
-    }
+    // Review events are immutable history — always append, never rewrite.
+    const approval: Approval = { ...input, id: createId(), createdAt: timestamp, updatedAt: timestamp };
+    state.approvals.push(approval);
     const post = state.posts.find((p) => p.id === input.postId);
     if (post) {
       post.approvalStatus = input.status;
@@ -352,6 +370,60 @@ export class DemoRepository implements Repository {
     state.activity = state.activity.slice(0, 200);
     await this.persist();
     return structuredClone(record);
+  }
+
+  /**
+   * Owner notification for a client review response. The recipient is always
+   * resolved from the client record — never supplied by the reviewer. Skips
+   * identical events created moments ago so a retried request stays single.
+   */
+  private async createNotification(
+    input: Omit<AppNotification, "id" | "recipientId" | "isRead" | "createdAt">,
+  ): Promise<void> {
+    const state = await this.ensureState();
+    const client = state.clients.find((c) => c.id === input.clientId);
+    if (!client) return;
+    // Deliberately type-agnostic: an approval note is also stored as a
+    // comment, and the mirrored message must not notify twice.
+    const duplicate = state.notifications.find(
+      (n) =>
+        n.recipientId === client.ownerId &&
+        n.postId === input.postId &&
+        n.message === input.message &&
+        Date.now() - new Date(n.createdAt).getTime() < 30_000,
+    );
+    if (duplicate) return;
+    state.notifications.unshift({
+      ...input,
+      id: createId(),
+      recipientId: client.ownerId,
+      isRead: false,
+      createdAt: now(),
+    });
+    state.notifications = state.notifications.slice(0, 200);
+    await this.persist();
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    const state = await this.ensureState();
+    const notification = state.notifications.find(
+      (n) => n.id === id && n.recipientId === state.user.id,
+    );
+    if (!notification || notification.isRead) return;
+    notification.isRead = true;
+    await this.persist();
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    const state = await this.ensureState();
+    let changed = false;
+    for (const notification of state.notifications) {
+      if (notification.recipientId === state.user.id && !notification.isRead) {
+        notification.isRead = true;
+        changed = true;
+      }
+    }
+    if (changed) await this.persist();
   }
 
   async uploadFile(
@@ -424,10 +496,22 @@ export class DemoRepository implements Repository {
     const link = await this.findValidShare(token);
     if (typeof link === "string") return link;
     if (!link.allowComments) return "inactive";
+    const state = await this.ensureState();
+    const post = state.posts.find((p) => p.id === input.postId);
+    // A share token only grants access to its own client's posts.
+    if (!post || post.clientId !== link.clientId) return "not_found";
     const comment = await this.createComment({ ...input, resolved: false });
-    const post = this.state?.posts.find((p) => p.id === input.postId);
-    if (post && input.commentType === "change_request") {
+    if (input.commentType === "change_request") {
       await this.updatePost(post.id, { approvalStatus: "changes_requested" });
+    } else {
+      // Standalone feedback; change requests are notified via the approval path.
+      await this.createNotification({
+        clientId: link.clientId,
+        postId: post.id,
+        type: "review_feedback_received",
+        title: `${input.authorName} left feedback`,
+        message: input.body,
+      });
     }
     await this.recordActivity({
       clientId: link.clientId,
@@ -436,6 +520,7 @@ export class DemoRepository implements Repository {
         input.commentType === "change_request" ? "a change request" : "a comment"
       }`,
     });
+    this.broadcast();
     return comment;
   }
 
@@ -446,7 +531,22 @@ export class DemoRepository implements Repository {
     const link = await this.findValidShare(token);
     if (typeof link === "string") return link;
     if (!link.allowApproval) return "inactive";
+    const state = await this.ensureState();
+    const post = state.posts.find((p) => p.id === input.postId);
+    // A share token only grants access to its own client's posts.
+    if (!post || post.clientId !== link.clientId) return "not_found";
     const approval = await this.recordApproval({ ...input, clientId: link.clientId });
+    await this.createNotification({
+      clientId: link.clientId,
+      postId: post.id,
+      type: input.status === "approved" ? "review_approved" : "review_changes_requested",
+      title: `${input.reviewerName} ${
+        input.status === "approved" ? "approved the post" : "requested changes"
+      }`,
+      message:
+        input.message ??
+        (input.status === "approved" ? "The post is ready." : "Open the post to see the request."),
+    });
     await this.recordActivity({
       clientId: link.clientId,
       type: input.status === "approved" ? "approval_received" : "changes_requested",
@@ -454,6 +554,7 @@ export class DemoRepository implements Repository {
         input.status === "approved" ? "approved a post" : "requested changes on a post"
       }`,
     });
+    this.broadcast();
     return approval;
   }
 

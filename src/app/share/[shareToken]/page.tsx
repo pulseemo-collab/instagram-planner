@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { CircleCheck, Grid3x3, LinkIcon, MessageSquare, Undo2 } from "lucide-react";
 import { InstagramProfile } from "@/components/instagram/instagram-profile";
@@ -64,6 +64,20 @@ function SharePageInner() {
   const [feedback, setFeedback] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Approval needs an explicit confirmation click before it submits.
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  // Synchronous re-entry guard: two rapid clicks land before React re-renders
+  // with `busy`, so the state flag alone can't stop a duplicate submission.
+  const busyRef = useRef(false);
+
+  // Reset the confirm step and stale errors when switching posts
+  // (render-phase sync of this component's own state).
+  const [lastOpenPostId, setLastOpenPostId] = useState(openPostId);
+  if (openPostId !== lastOpenPostId) {
+    setLastOpenPostId(openPostId);
+    setConfirmApprove(false);
+    setFormError(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -152,7 +166,9 @@ function SharePageInner() {
   }
 
   async function submitDecision(status: "approved" | "changes_requested", postId: string, message: string | null) {
+    if (busyRef.current) return;
     if (!persistReviewer()) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const repo = await getRepository();
@@ -179,17 +195,23 @@ function SharePageInner() {
       await refreshBundle();
       toast(status === "approved" ? "Post approved" : "Change request sent");
       setFeedback("");
+    } catch {
+      toast("Something went wrong — your response wasn't saved. Please try again.", "error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
+      setConfirmApprove(false);
     }
   }
 
   async function submitComment(postId: string, body: string) {
+    if (busyRef.current) return;
     if (!persistReviewer()) return;
     if (!body.trim() || body.trim().length < 2) {
       setFormError("Write a short message first.");
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const repo = await getRepository();
@@ -207,12 +229,16 @@ function SharePageInner() {
       await refreshBundle();
       toast("Comment sent");
       setFeedback("");
+    } catch {
+      toast("Something went wrong — your comment wasn't saved. Please try again.", "error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function approveAllPending() {
+    if (busyRef.current) return;
     if (!persistReviewer()) return;
     const pending = bundle!.posts.filter(
       (p) => p.approvalStatus === "awaiting_approval" || p.approvalStatus === "not_sent",
@@ -221,6 +247,7 @@ function SharePageInner() {
       toast("Nothing waiting for approval", "info");
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       const repo = await getRepository();
@@ -235,7 +262,11 @@ function SharePageInner() {
       }
       await refreshBundle();
       toast(`${pending.length} posts approved`);
+    } catch {
+      toast("Something went wrong — not everything was approved. Please try again.", "error");
+      await refreshBundle();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -335,14 +366,22 @@ function SharePageInner() {
                     <Button
                       variant="primary"
                       disabled={busy || openPost.approvalStatus === "approved"}
-                      onClick={() => void submitDecision("approved", openPost.id, feedback.trim() || null)}
+                      onClick={() => {
+                        if (!persistReviewer()) return;
+                        if (!confirmApprove) {
+                          setConfirmApprove(true);
+                          return;
+                        }
+                        void submitDecision("approved", openPost.id, feedback.trim() || null);
+                      }}
                     >
                       <CircleCheck className="size-4" aria-hidden="true" />
-                      Approve
+                      {confirmApprove ? "Confirm approval" : "Approve"}
                     </Button>
                     <Button
                       disabled={busy}
                       onClick={() => {
+                        setConfirmApprove(false);
                         if (!feedback.trim()) {
                           setFormError("Describe the change you need first.");
                           return;
@@ -365,6 +404,13 @@ function SharePageInner() {
                   </Button>
                 )}
               </div>
+              <p role="status" className="mt-2 min-h-4 text-[12px] text-ink-faint">
+                {confirmApprove && !busy
+                  ? "Click Confirm approval to record your approval."
+                  : busy
+                    ? "Sending…"
+                    : ""}
+              </p>
             </section>
           ) : (
             <section className="rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5">

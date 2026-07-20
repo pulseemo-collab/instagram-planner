@@ -1,5 +1,6 @@
 import type {
   Activity,
+  AppNotification,
   Approval,
   Client,
   ClientBundle,
@@ -22,6 +23,8 @@ export interface WorkspaceSnapshot {
   approvals: Approval[];
   shareLinks: ShareLink[];
   activity: Activity[];
+  /** Newest first, scoped to the signed-in user. */
+  notifications: AppNotification[];
 }
 
 export interface UploadResult {
@@ -83,6 +86,9 @@ export interface Repository {
   regenerateShareToken(id: string): Promise<ShareLink>;
 
   recordActivity(input: Omit<Activity, "id" | "createdAt">): Promise<Activity>;
+
+  markNotificationRead(id: string): Promise<void>;
+  markAllNotificationsRead(): Promise<void>;
 
   /** Store a file, returning a persistent reference. Reports progress 0..1. */
   uploadFile(

@@ -27,6 +27,11 @@ export type MediaType = "image" | "video";
  */
 export type CoverSource = "generated" | "frame" | "uploaded";
 export type CommentType = "general" | "change_request";
+/** In-app notification kinds produced by client review responses. */
+export type NotificationType =
+  | "review_changes_requested"
+  | "review_approved"
+  | "review_feedback_received";
 export type ActivityType =
   | "client_created"
   | "client_updated"
@@ -157,6 +162,23 @@ export interface ShareLink {
   expiresAt: string | null;
   allowComments: boolean;
   allowApproval: boolean;
+  createdAt: string;
+}
+
+/**
+ * In-app notification for the workspace owner. Created server-side (Supabase
+ * trigger) or by the demo repository when a client responds through a share
+ * link — the reviewer never chooses the recipient.
+ */
+export interface AppNotification {
+  id: string;
+  recipientId: string;
+  clientId: string;
+  postId: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  isRead: boolean;
   createdAt: string;
 }
 

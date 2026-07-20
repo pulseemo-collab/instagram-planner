@@ -23,7 +23,10 @@ test.describe("Share links & public reviewer flow", () => {
 
     await page.getByLabel("Email").fill("rita@example.com");
     await page.getByLabel(/Message/).fill("Looks great — approved.");
-    await page.getByRole("button", { name: "Approve" }).click();
+    // Approval is a two-step confirmation to avoid accidental clicks.
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect(page.getByText("Click Confirm approval to record your approval.")).toBeVisible();
+    await page.getByRole("button", { name: "Confirm approval" }).click();
     await expect(page.locator("body")).toContainText("Post approved");
     await expect(page.locator("body")).toContainText("Approved");
     await evidence(page, "approvals", "reviewer-approved");

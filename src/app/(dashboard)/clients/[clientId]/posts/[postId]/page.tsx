@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CalendarClock, Images, Trash2 } from "lucide-react";
 import { InstagramPostDetail } from "@/components/instagram/post-detail";
 import { PhoneFrame } from "@/components/preview/phone-frame";
 import { PostForm, type PostDraft } from "@/components/posts/post-form";
+import { ReviewActivity } from "@/components/posts/review-activity";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,6 +26,8 @@ export default function PostDetailPage() {
   // Opened from the calendar → back returns to the calendar (client + month
   // state are persisted by the calendar page itself).
   const fromCalendar = searchParams.get("from") === "calendar";
+  // Opened from a notification → bring the review activity into view.
+  const focusReview = searchParams.get("focus") === "review";
   const { status, snapshot } = useWorkspace();
   const mutate = useMutate();
   const { toast } = useToast();
@@ -74,6 +77,12 @@ export default function PostDetailPage() {
       : snapshot.media;
     return buildIgPostDetail(client, effectivePost, effectiveMedia, comments);
   }, [client, post, snapshot, comments, draft]);
+
+  const ready = status === "ready" && Boolean(post);
+  useEffect(() => {
+    if (!focusReview || !ready) return;
+    document.getElementById("review-activity")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focusReview, ready]);
 
   if (status === "loading" || status === "idle" || !snapshot) return <PageSkeleton />;
 
@@ -157,30 +166,39 @@ export default function PostDetailPage() {
         </div>
 
         {/* Direct inline editor — no modal required */}
-        <section
-          aria-label={post.stage === "content" ? "Create post" : "Edit post"}
-          className="min-w-0 rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5"
-        >
-          <h3 className="mb-4 text-[13.5px] font-semibold tracking-tight text-ink">
-            {post.stage === "content" ? "Create post" : "Edit post"}
-          </h3>
-          {post.stage === "content" && (
-            <p className="-mt-3 mb-4 text-[12px] leading-relaxed text-ink-faint">
-              This content package isn&apos;t an Instagram post yet — complete the details
-              below and choose the publishing time.
-            </p>
-          )}
-          <PostForm
-            key={post.id}
-            clientId={client.id}
+        <div className="min-w-0 space-y-5">
+          <section
+            aria-label={post.stage === "content" ? "Create post" : "Edit post"}
+            className="min-w-0 rounded-xl border border-line bg-panel p-4 shadow-panel sm:p-5"
+          >
+            <h3 className="mb-4 text-[13.5px] font-semibold tracking-tight text-ink">
+              {post.stage === "content" ? "Create post" : "Edit post"}
+            </h3>
+            {post.stage === "content" && (
+              <p className="-mt-3 mb-4 text-[12px] leading-relaxed text-ink-faint">
+                This content package isn&apos;t an Instagram post yet — complete the details
+                below and choose the publishing time.
+              </p>
+            )}
+            <PostForm
+              key={post.id}
+              clientId={client.id}
+              post={post}
+              existingMedia={snapshot.media.filter((m) => m.postId === post.id)}
+              clientPosts={snapshot.posts.filter((p) => p.clientId === client.id)}
+              variant="inline"
+              onSaved={() => setDraft(null)}
+              onDraftChange={setDraft}
+            />
+          </section>
+
+          <ReviewActivity
             post={post}
-            existingMedia={snapshot.media.filter((m) => m.postId === post.id)}
-            clientPosts={snapshot.posts.filter((p) => p.clientId === client.id)}
-            variant="inline"
-            onSaved={() => setDraft(null)}
-            onDraftChange={setDraft}
+            comments={comments}
+            approvals={snapshot.approvals.filter((a) => a.postId === post.id)}
+            ownerEmail={snapshot.user.email}
           />
-        </section>
+        </div>
       </div>
 
       <ConfirmDialog

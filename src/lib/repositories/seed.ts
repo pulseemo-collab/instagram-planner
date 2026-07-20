@@ -1,5 +1,5 @@
 import type { WorkspaceSnapshot } from "./types";
-import type { Activity, Approval, Client, Comment, Highlight, Post, PostMedia, ShareLink } from "@/types/domain";
+import type { Activity, AppNotification, Approval, Client, Comment, Highlight, Post, PostMedia, ShareLink } from "@/types/domain";
 
 /**
  * Demo seed. Media uses `gradient:` placeholder URIs (from/via/to/angle) so
@@ -229,6 +229,11 @@ const shareLinks: ShareLink[] = [
   { id: "sl-3", clientId: kavo.id, token: "demo-kavo-hu1la", isActive: false, expiresAt: null, allowComments: true, allowApproval: false, createdAt: daysAgo(9) },
 ];
 
+const notifications: AppNotification[] = [
+  { id: "n-1", recipientId: DEMO_USER_ID, clientId: kavo.id, postId: "post-k2", type: "review_changes_requested", title: "Jasper Vink requested changes", message: "Cupping moved to Sunday.", isRead: false, createdAt: daysAgo(1, 9) },
+  { id: "n-2", recipientId: DEMO_USER_ID, clientId: aurelle.id, postId: "post-a5", type: "review_changes_requested", title: "Camille Aurelle requested changes", message: "Crop feels too tight on slide two.", isRead: false, createdAt: daysAgo(2, 16) },
+];
+
 const activity: Activity[] = [
   { id: "act-1", clientId: norr.id, type: "approval_received", description: "Elin Åkesson approved 2 posts for Studio Norr", createdAt: daysAgo(3, 14) },
   { id: "act-2", clientId: aurelle.id, type: "post_created", description: "You added 6 images to Maison Aurelle", createdAt: daysAgo(3, 10) },
@@ -256,6 +261,7 @@ export function createSeedSnapshot(): WorkspaceSnapshot {
     approvals,
     shareLinks,
     activity,
+    notifications,
   };
 }
 
@@ -278,5 +284,6 @@ export function createEmptySnapshot(): WorkspaceSnapshot {
     approvals: [],
     shareLinks: [],
     activity: [],
+    notifications: [],
   };
 }

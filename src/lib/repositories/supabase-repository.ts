@@ -5,6 +5,7 @@ import { getBrowserSupabase } from "@/lib/supabase/client";
 import { createId, createToken, slugify } from "@/lib/id";
 import type {
   Activity,
+  AppNotification,
   Approval,
   Client,
   ClientBundle,
@@ -205,6 +206,20 @@ function mapShareLink(row: Row): ShareLink {
   };
 }
 
+function mapNotification(row: Row): AppNotification {
+  return {
+    id: asStr(row.id),
+    recipientId: asStr(row.recipient_id),
+    clientId: asStr(row.client_id),
+    postId: asStrOrNull(row.post_id),
+    type: asStr(row.type) as AppNotification["type"],
+    title: asStr(row.title),
+    message: asStr(row.message),
+    isRead: asBool(row.is_read),
+    createdAt: asStr(row.created_at),
+  };
+}
+
 function mapActivity(row: Row): Activity {
   return {
     id: asStr(row.id),
@@ -232,12 +247,19 @@ export class SupabaseRepository implements Repository {
     const { data: auth } = await this.sb.auth.getUser();
     if (!auth.user) throw new Error("Not signed in");
 
-    const [profile, clients] = await Promise.all([
+    const [profile, clients, notifications] = await Promise.all([
       this.sb.from("profiles").select("*").eq("id", auth.user.id).single(),
       this.sb.from("clients").select("*").order("updated_at", { ascending: false }),
+      this.sb
+        .from("notifications")
+        .select("*")
+        .eq("recipient_id", auth.user.id)
+        .order("created_at", { ascending: false })
+        .limit(100),
     ]);
     throwIf(profile.error);
     throwIf(clients.error);
+    throwIf(notifications.error);
 
     const clientIds = (clients.data ?? []).map((c) => String((c as Row).id));
     const emptyOk = { data: [] as Row[], error: null };
@@ -273,6 +295,7 @@ export class SupabaseRepository implements Repository {
       approvals: ((approvals.data ?? []) as Row[]).map(mapApproval),
       shareLinks: ((shareLinks.data ?? []) as Row[]).map(mapShareLink),
       activity: ((activity.data ?? []) as Row[]).map(mapActivity),
+      notifications: ((notifications.data ?? []) as Row[]).map(mapNotification),
     };
   }
 
@@ -566,6 +589,23 @@ export class SupabaseRepository implements Repository {
       .single();
     throwIf(error);
     return mapActivity(data as Row);
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    // RLS restricts the update to the caller's own notifications.
+    const { error } = await this.sb.from("notifications").update({ is_read: true }).eq("id", id);
+    throwIf(error);
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    const { data: auth } = await this.sb.auth.getUser();
+    if (!auth.user) throw new Error("Not signed in");
+    const { error } = await this.sb
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("recipient_id", auth.user.id)
+      .eq("is_read", false);
+    throwIf(error);
   }
 
   async uploadFile(

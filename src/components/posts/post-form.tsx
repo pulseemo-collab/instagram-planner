@@ -141,6 +141,14 @@ export function PostForm({
   const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus>(
     post?.approvalStatus ?? "not_sent",
   );
+  // Client responses and "Resubmit for review" change the stored approval
+  // status while this form is mounted; adopt the new value so a later save
+  // doesn't silently revert it (render-phase sync of the same component).
+  const [seenApprovalStatus, setSeenApprovalStatus] = useState(post?.approvalStatus);
+  if (post && post.approvalStatus !== seenApprovalStatus) {
+    setSeenApprovalStatus(post.approvalStatus);
+    setApprovalStatus(post.approvalStatus);
+  }
   const [scheduleEnabled, setScheduleEnabled] = useState(Boolean(scheduledParts));
   // Dates are entered as DD/MM/YYYY. When converting content, the day comes
   // from the calendar drop and the TIME starts empty — the scheduler picks it.

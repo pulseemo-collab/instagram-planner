@@ -1,8 +1,9 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Menu, Plus, Search } from "lucide-react";
+import { Menu, Plus, Search } from "lucide-react";
 import { getPageTitle } from "@/lib/navigation";
+import { NotificationBell } from "./notification-bell";
 
 interface TopBarProps {
   onOpenMobileNav: () => void;
@@ -57,17 +58,7 @@ export function TopBar({ onOpenMobileNav }: TopBarProps) {
         </button>
 
         {/* Notifications */}
-        <button
-          type="button"
-          aria-label="Notifications (2 unread)"
-          className="relative flex size-9 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-panel hover:text-ink"
-        >
-          <Bell className="size-[18px]" aria-hidden="true" />
-          <span
-            aria-hidden="true"
-            className="absolute right-2 top-2 size-1.5 rounded-full bg-accent"
-          />
-        </button>
+        <NotificationBell />
 
         {/* Primary action */}
         <button
