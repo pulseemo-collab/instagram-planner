@@ -44,7 +44,18 @@ const shareErrorCopy: Record<ShareError, { title: string; body: string }> = {
     title: "Preview expired",
     body: "This link has passed its expiration date. Ask the creator for a new one.",
   },
+  rate_limited: {
+    title: "Too many responses",
+    body: "This link has received a lot of responses in a short time. Please try again in a few minutes.",
+  },
 };
+
+const RATE_LIMITED_TOAST =
+  "Too many responses from this link right now — please try again in a few minutes.";
+
+function postsLabel(count: number): string {
+  return `${count} ${count === 1 ? "post" : "posts"}`;
+}
 
 function validateReviewer(reviewer: Reviewer): string | null {
   if (!reviewer.name.trim() || reviewer.name.trim().length < 2) return "Please enter your name.";
@@ -180,18 +191,13 @@ function SharePageInner() {
         message,
       });
       if (isShareError(result)) {
-        toast("This link no longer accepts approvals", "error");
+        toast(
+          result === "rate_limited" ? RATE_LIMITED_TOAST : "This link no longer accepts approvals",
+          "error",
+        );
         return;
       }
-      if (message) {
-        await repo.submitPublicComment(params.shareToken, {
-          postId,
-          authorName: reviewer.name.trim(),
-          authorEmail: reviewer.email.trim(),
-          body: message,
-          commentType: status === "changes_requested" ? "change_request" : "general",
-        });
-      }
+      // A message is mirrored into the comment thread by the repository.
       await refreshBundle();
       toast(status === "approved" ? "Post approved" : "Change request sent");
       setFeedback("");
@@ -220,10 +226,12 @@ function SharePageInner() {
         authorName: reviewer.name.trim(),
         authorEmail: reviewer.email.trim(),
         body: body.trim().slice(0, 2000),
-        commentType: "general",
       });
       if (isShareError(result)) {
-        toast("This link no longer accepts comments", "error");
+        toast(
+          result === "rate_limited" ? RATE_LIMITED_TOAST : "This link no longer accepts comments",
+          "error",
+        );
         return;
       }
       await refreshBundle();
@@ -249,21 +257,37 @@ function SharePageInner() {
     }
     busyRef.current = true;
     setBusy(true);
+    let approved = 0;
     try {
       const repo = await getRepository();
       for (const post of pending) {
-        await repo.submitPublicApproval(params.shareToken, {
+        const result = await repo.submitPublicApproval(params.shareToken, {
           postId: post.id,
           reviewerName: reviewer.name.trim(),
           reviewerEmail: reviewer.email.trim(),
           status: "approved",
           message: null,
         });
+        if (isShareError(result)) {
+          // Stop at the first refusal and say exactly how far we got.
+          await refreshBundle();
+          toast(
+            result === "rate_limited"
+              ? `Approved ${approved} of ${postsLabel(pending.length)}. Too many responses right now — use “Approve all pending” again in a few minutes for the rest.`
+              : `Approved ${approved} of ${postsLabel(pending.length)}. This link no longer accepts approvals.`,
+            "error",
+          );
+          return;
+        }
+        approved += 1;
       }
       await refreshBundle();
-      toast(`${pending.length} posts approved`);
+      toast(`${postsLabel(approved)} approved`);
     } catch {
-      toast("Something went wrong — not everything was approved. Please try again.", "error");
+      toast(
+        `Approved ${approved} of ${postsLabel(pending.length)}. Something went wrong — please try again for the rest.`,
+        "error",
+      );
       await refreshBundle();
     } finally {
       busyRef.current = false;

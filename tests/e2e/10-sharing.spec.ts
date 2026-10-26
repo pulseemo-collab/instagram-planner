@@ -121,6 +121,60 @@ test.describe("Share links & public reviewer flow", () => {
     await evidence(page, "errors", "share-expired");
   });
 
+  test("reviewer view excludes designer content packages", async ({ page }) => {
+    // Maison Aurelle has 8 completed posts and 2 calendar content packages;
+    // reviewers only ever receive the completed posts.
+    await page.goto("/share/demo-aurelle-h3ritage");
+    await expect(page.locator("body")).toContainText("8 planned posts");
+  });
+
+  test("link permissions: comments-off / approvals-off hide those actions", async ({ page }) => {
+    await enterDemo(page, "/clients/client-norr");
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Share preview" });
+
+    // View-only link: both switches off.
+    await dialog.getByRole("switch", { name: "Allow comments" }).click();
+    await dialog.getByRole("switch", { name: "Allow approvals" }).click();
+    await dialog.getByRole("button", { name: "Create share link" }).click();
+    await expect(page.locator("body")).toContainText("Share link created");
+    const viewOnly = (await dialog.locator("code").last().textContent())?.replace("/share/", "").trim();
+
+    // Comments-only link: approvals off.
+    await dialog.getByRole("switch", { name: "Allow comments" }).click();
+    await dialog.getByRole("button", { name: "Create share link" }).click();
+    await expect(dialog.locator("li")).toHaveCount(3);
+    const commentsOnly = (await dialog.locator("code").last().textContent())?.replace("/share/", "").trim();
+
+    await page.goto(`/share/${viewOnly}`);
+    await expect(page.getByRole("heading", { name: "Studio Norr" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve all pending" })).toHaveCount(0);
+    await page.locator(".ig-root .grid.grid-cols-3 > button").first().click();
+    await expect(page.getByRole("button", { name: "Back to grid" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Request changes" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Comment only" })).toHaveCount(0);
+
+    await page.goto(`/share/${commentsOnly}`);
+    await page.locator(".ig-root .grid.grid-cols-3 > button").first().click();
+    await expect(page.getByRole("button", { name: "Comment only" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Request changes" })).toHaveCount(0);
+  });
+
+  test("an approval message becomes exactly one comment on the post", async ({ page }) => {
+    await page.goto("/share/demo-norr-ostermalm");
+    await page.getByLabel("Name").fill("Rita Reviewer");
+    await page.getByLabel("Email").fill("rita@example.com");
+    // "Handrail detail": not yet approved and no seeded comments.
+    await page.locator(".ig-root .grid.grid-cols-3 > button").nth(4).click();
+    await page.getByLabel(/Message/).fill("Ship it as is.");
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm approval" }).click();
+    await expect(page.locator("body")).toContainText("Post approved");
+    await expect(page.locator(".ig-root").last().getByText("Ship it as is.")).toHaveCount(1);
+  });
+
   test("DEMO LIMITATION PROOF: fresh browser context sees seed links but not newly created links", async ({
     browser,
   }) => {

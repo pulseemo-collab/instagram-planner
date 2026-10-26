@@ -27,6 +27,7 @@ import type {
   UploadResult,
   WorkspaceSnapshot,
 } from "./types";
+import { SHARE_RATE_LIMITS } from "./types";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -66,6 +67,8 @@ export class DemoRepository implements Repository {
   private state: WorkspaceSnapshot | null = null;
   private mediaUrlCache = new Map<string, string>();
   private channel: BroadcastChannel | null = null;
+  /** Share link id → timestamps (ms) of recent reviewer submissions. */
+  private shareSubmissions = new Map<string, number[]>();
 
   constructor() {
     // Cross-tab "realtime": other tabs announce persisted changes; drop the
@@ -455,20 +458,53 @@ export class DemoRepository implements Repository {
     return stored;
   }
 
-  private bundleForClient(state: WorkspaceSnapshot, clientId: string): ClientBundle | null {
+  /**
+   * What a reviewer may see — mirrors the `resolve_share` RPC: completed posts
+   * only (no designer content packages), no reviewer emails, no share links.
+   */
+  private reviewerBundle(state: WorkspaceSnapshot, clientId: string): ClientBundle | null {
     const client = state.clients.find((c) => c.id === clientId);
     if (!client) return null;
-    const posts = state.posts.filter((p) => p.clientId === clientId);
+    const posts = state.posts.filter((p) => p.clientId === clientId && p.stage === "post");
     const postIds = new Set(posts.map((p) => p.id));
     return structuredClone({
       client,
       highlights: state.highlights.filter((h) => h.clientId === clientId),
       posts,
       media: state.media.filter((m) => postIds.has(m.postId)),
-      comments: state.comments.filter((c) => postIds.has(c.postId)),
-      approvals: state.approvals.filter((a) => a.clientId === clientId),
-      shareLinks: state.shareLinks.filter((s) => s.clientId === clientId),
+      comments: state.comments
+        .filter((c) => postIds.has(c.postId))
+        .map((c) => ({ ...c, authorEmail: null })),
+      approvals: state.approvals
+        .filter((a) => a.clientId === clientId && postIds.has(a.postId))
+        .map((a) => ({ ...a, reviewerEmail: null })),
+      shareLinks: [],
     });
+  }
+
+  /**
+   * Per-link reviewer rate limit (same limits as the `share_rate_limit` SQL
+   * helper). Kept in memory — demo reviewers share the owner's browser anyway.
+   * Returns false, without recording, when the link is over a limit.
+   */
+  private takeShareSubmission(linkId: string): boolean {
+    const nowMs = Date.now();
+    const longestWindow = Math.max(...SHARE_RATE_LIMITS.map((l) => l.windowMs));
+    const recent = (this.shareSubmissions.get(linkId) ?? []).filter(
+      (t) => nowMs - t < longestWindow,
+    );
+    const limited = SHARE_RATE_LIMITS.some(
+      (limit) => recent.filter((t) => nowMs - t < limit.windowMs).length >= limit.max,
+    );
+    if (!limited) recent.push(nowMs);
+    this.shareSubmissions.set(linkId, recent);
+    return !limited;
+  }
+
+  /** A share token only grants access to its own client's completed posts. */
+  private reviewablePost(state: WorkspaceSnapshot, link: ShareLink, postId: string): Post | null {
+    const post = state.posts.find((p) => p.id === postId);
+    return post && post.clientId === link.clientId && post.stage === "post" ? post : null;
   }
 
   private async findValidShare(token: string): Promise<ShareLink | ShareError> {
@@ -484,44 +520,41 @@ export class DemoRepository implements Repository {
     const link = await this.findValidShare(token);
     if (typeof link === "string") return link;
     const state = await this.ensureState();
-    const bundle = this.bundleForClient(state, link.clientId);
+    const bundle = this.reviewerBundle(state, link.clientId);
     if (!bundle) return "not_found";
     return { shareLink: structuredClone(link), bundle };
   }
 
   async submitPublicComment(
     token: string,
-    input: Omit<Comment, "id" | "createdAt" | "resolved">,
+    input: Omit<Comment, "id" | "createdAt" | "resolved" | "commentType">,
   ): Promise<Comment | ShareError> {
     const link = await this.findValidShare(token);
     if (typeof link === "string") return link;
     if (!link.allowComments) return "inactive";
     const state = await this.ensureState();
-    const post = state.posts.find((p) => p.id === input.postId);
-    // A share token only grants access to its own client's posts.
-    if (!post || post.clientId !== link.clientId) return "not_found";
-    const comment = await this.createComment({ ...input, resolved: false });
-    if (input.commentType === "change_request") {
-      await this.updatePost(post.id, { approvalStatus: "changes_requested" });
-    } else {
-      // Standalone feedback; change requests are notified via the approval path.
-      await this.createNotification({
-        clientId: link.clientId,
-        postId: post.id,
-        type: "review_feedback_received",
-        title: `${input.authorName} left feedback`,
-        message: input.body,
-      });
-    }
+    const post = this.reviewablePost(state, link, input.postId);
+    if (!post) return "not_found";
+    if (!this.takeShareSubmission(link.id)) return "rate_limited";
+    const comment = await this.createComment({
+      ...input,
+      commentType: "general",
+      resolved: false,
+    });
+    await this.createNotification({
+      clientId: link.clientId,
+      postId: post.id,
+      type: "review_feedback_received",
+      title: `${input.authorName} left feedback`,
+      message: input.body,
+    });
     await this.recordActivity({
       clientId: link.clientId,
-      type: input.commentType === "change_request" ? "changes_requested" : "comment_received",
-      description: `${input.authorName} left ${
-        input.commentType === "change_request" ? "a change request" : "a comment"
-      }`,
+      type: "comment_received",
+      description: `${input.authorName} left a comment`,
     });
     this.broadcast();
-    return comment;
+    return { ...comment, authorEmail: null };
   }
 
   async submitPublicApproval(
@@ -532,10 +565,25 @@ export class DemoRepository implements Repository {
     if (typeof link === "string") return link;
     if (!link.allowApproval) return "inactive";
     const state = await this.ensureState();
-    const post = state.posts.find((p) => p.id === input.postId);
-    // A share token only grants access to its own client's posts.
-    if (!post || post.clientId !== link.clientId) return "not_found";
-    const approval = await this.recordApproval({ ...input, clientId: link.clientId });
+    const post = this.reviewablePost(state, link, input.postId);
+    if (!post) return "not_found";
+    // One submission covers the approval and its companion comment.
+    if (!this.takeShareSubmission(link.id)) return "rate_limited";
+    const message = input.message?.trim() || null;
+    const approval = await this.recordApproval({ ...input, message, clientId: link.clientId });
+    // The message also joins the post's comment thread unless comments are off
+    // (it is kept on the approval either way). Its owner notification is the
+    // approval's own, below.
+    if (message && link.allowComments) {
+      await this.createComment({
+        postId: post.id,
+        authorName: input.reviewerName,
+        authorEmail: input.reviewerEmail,
+        body: message,
+        commentType: input.status === "changes_requested" ? "change_request" : "general",
+        resolved: false,
+      });
+    }
     await this.createNotification({
       clientId: link.clientId,
       postId: post.id,
@@ -544,7 +592,7 @@ export class DemoRepository implements Repository {
         input.status === "approved" ? "approved the post" : "requested changes"
       }`,
       message:
-        input.message ??
+        message ??
         (input.status === "approved" ? "The post is ready." : "Open the post to see the request."),
     });
     await this.recordActivity({
@@ -555,7 +603,7 @@ export class DemoRepository implements Repository {
       }`,
     });
     this.broadcast();
-    return approval;
+    return { ...approval, reviewerEmail: null };
   }
 
   async resetDemoData(seed: boolean): Promise<void> {

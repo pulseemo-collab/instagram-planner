@@ -1,6 +1,6 @@
 "use client";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import { createId, createToken, slugify } from "@/lib/id";
 import type {
@@ -8,7 +8,6 @@ import type {
   AppNotification,
   Approval,
   Client,
-  ClientBundle,
   Comment,
   Highlight,
   Post,
@@ -232,6 +231,27 @@ function mapActivity(row: Row): Activity {
 
 function throwIf(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
+}
+
+/** Error codes raised by the 0006 share RPCs, mapped to repository errors. */
+const SHARE_RPC_ERRORS: Record<string, ShareError> = {
+  not_found: "not_found",
+  inactive: "inactive",
+  expired: "expired",
+  comments_disabled: "inactive",
+  approvals_disabled: "inactive",
+  rate_limited: "rate_limited",
+};
+
+function shareErrorFrom(error: { message: string }): ShareError | null {
+  return SHARE_RPC_ERRORS[error.message] ?? null;
+}
+
+/** Known share refusals become a ShareError; anything else is a real failure. */
+function shareErrorOrThrow(error: { message: string }): ShareError {
+  const shareError = shareErrorFrom(error);
+  if (!shareError) throw new Error(error.message);
+  return shareError;
 }
 
 /* ------------------------------ repository ------------------------------ */
@@ -657,80 +677,72 @@ export class SupabaseRepository implements Repository {
     return url; // Supabase URLs are directly displayable.
   }
 
-  private async shareRequest(token: string) {
-    // Fresh client instance whose PostgREST requests carry the share token
-    // header consumed by current_share_client() in RLS policies.
-    const { createBrowserClient } = await import("@supabase/ssr");
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) throw new Error("Supabase is not configured");
-    return createBrowserClient(url, key, {
-      global: { headers: { "x-share-token": token } },
-    });
+  /**
+   * Dedicated anonymous client for public share requests. Never the cached
+   * browser singleton: that one may carry the owner's session (which would
+   * widen what RLS returns). Share access goes exclusively through the
+   * SECURITY DEFINER RPCs from migration 0006, which take the token as an
+   * argument — no request headers involved.
+   */
+  private publicClient: SupabaseClient | null = null;
+
+  private get shareSb(): SupabaseClient {
+    if (!this.publicClient) {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!url || !key) throw new Error("Supabase is not configured");
+      this.publicClient = createClient(url, key, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          storageKey: "gridline-share-anon",
+        },
+      });
+    }
+    return this.publicClient;
   }
 
   async resolveShareToken(token: string): Promise<ShareResolution | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data: clientRows, error } = await sb.from("clients").select("*").limit(1);
-    if (error) return "not_found";
-    const clientRow = (clientRows ?? [])[0] as Row | undefined;
-    if (!clientRow) return "not_found";
-    const clientId = String(clientRow.id);
+    const { data, error } = await this.shareSb.rpc("resolve_share", { share_token: token });
+    if (error) return shareErrorFrom(error) ?? "not_found";
+    const payload = data as {
+      link: Row;
+      client: Row | null;
+      highlights: Row[];
+      posts: Row[];
+      media: Row[];
+      comments: Row[];
+      approvals: Row[];
+    } | null;
+    if (!payload?.client) return "not_found";
 
-    const [highlights, posts, shareLinkRow] = await Promise.all([
-      sb.from("highlights").select("*").eq("client_id", clientId),
-      sb.from("posts").select("*").eq("client_id", clientId),
-      sb.rpc("share_token_client", { share_token: token }),
-    ]);
-    if (shareLinkRow.error || !shareLinkRow.data) return "not_found";
-
-    const postIds = ((posts.data ?? []) as Row[]).map((p) => String(p.id));
-    const [media, comments, approvals] = await Promise.all([
-      postIds.length ? sb.from("post_media").select("*").in("post_id", postIds) : { data: [], error: null },
-      postIds.length ? sb.from("comments").select("*").in("post_id", postIds) : { data: [], error: null },
-      sb.from("approvals").select("*").eq("client_id", clientId),
-    ]);
-
-    const bundle: ClientBundle = {
-      client: mapClient(clientRow),
-      highlights: ((highlights.data ?? []) as Row[]).map(mapHighlight),
-      posts: ((posts.data ?? []) as Row[]).map(mapPost),
-      media: ((media.data ?? []) as Row[]).map(mapMedia),
-      comments: ((comments.data ?? []) as Row[]).map(mapComment),
-      approvals: ((approvals.data ?? []) as Row[]).map(mapApproval),
-      shareLinks: [],
-    };
     return {
-      shareLink: {
-        id: "public",
-        clientId,
-        token,
-        isActive: true,
-        expiresAt: null,
-        allowComments: true,
-        allowApproval: true,
-      } as ShareLink,
-      bundle,
+      shareLink: mapShareLink({ ...payload.link, token }),
+      bundle: {
+        client: mapClient(payload.client),
+        highlights: payload.highlights.map(mapHighlight),
+        posts: payload.posts.map(mapPost),
+        media: payload.media.map(mapMedia),
+        comments: payload.comments.map(mapComment),
+        approvals: payload.approvals.map(mapApproval),
+        shareLinks: [],
+      },
     };
   }
 
   async submitPublicComment(
     token: string,
-    input: Omit<Comment, "id" | "createdAt" | "resolved">,
+    input: Omit<Comment, "id" | "createdAt" | "resolved" | "commentType">,
   ): Promise<Comment | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data, error } = await sb
-      .from("comments")
-      .insert({
-        post_id: input.postId,
-        author_name: input.authorName,
-        author_email: input.authorEmail,
-        body: input.body,
-        comment_type: input.commentType,
-      })
-      .select()
-      .single();
-    if (error) return "not_found";
+    const { data, error } = await this.shareSb.rpc("submit_share_comment", {
+      share_token: token,
+      p_post_id: input.postId,
+      p_author_name: input.authorName,
+      p_author_email: input.authorEmail,
+      p_body: input.body,
+    });
+    if (error) return shareErrorOrThrow(error);
     return mapComment(data as Row);
   }
 
@@ -738,22 +750,15 @@ export class SupabaseRepository implements Repository {
     token: string,
     input: Omit<Approval, "id" | "createdAt" | "updatedAt" | "clientId">,
   ): Promise<Approval | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data: clientId } = await sb.rpc("share_token_client", { share_token: token });
-    if (!clientId) return "not_found";
-    const { data, error } = await sb
-      .from("approvals")
-      .insert({
-        client_id: clientId,
-        post_id: input.postId,
-        reviewer_name: input.reviewerName,
-        reviewer_email: input.reviewerEmail,
-        status: input.status,
-        message: input.message,
-      })
-      .select()
-      .single();
-    if (error) return "not_found";
+    const { data, error } = await this.shareSb.rpc("submit_share_approval", {
+      share_token: token,
+      p_post_id: input.postId,
+      p_reviewer_name: input.reviewerName,
+      p_reviewer_email: input.reviewerEmail,
+      p_status: input.status,
+      p_message: input.message,
+    });
+    if (error) return shareErrorOrThrow(error);
     return mapApproval(data as Row);
   }
 }
