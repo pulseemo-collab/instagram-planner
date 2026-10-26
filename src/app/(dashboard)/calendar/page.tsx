@@ -26,18 +26,17 @@ import { cn } from "@/lib/cn";
 import {
   dayKeyFor,
   dayKeyToNumeric,
-  formatNumericDate,
   formatTime,
   isSameMonth,
   isToday,
-  localDayKey,
-  localPartsFromIso,
   monthGrid,
   moveIsoToDay,
   numericToDayKey,
+  scheduledDayKey,
 } from "@/lib/dates";
 import { coverMediaFor, parseMediaRef } from "@/lib/instagram/map-profile";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
+import { useStoredValue } from "@/lib/use-stored-value";
 import type { Client, Post, PostMedia, PostType } from "@/types/domain";
 
 const typeIcons: Record<PostType, typeof ImageIcon> = {
@@ -50,14 +49,13 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const SELECTED_CLIENT_KEY = "gridline-calendar-client";
 const MONTH_KEY = "gridline-calendar-month";
 
-function readStoredMonth(): { year: number; month: number } {
+/** The month remembered for this session ("YYYY-M", month 0–11), else today's. */
+function parseStoredMonth(raw: string | null): { year: number; month: number } {
   const now = new Date();
-  const fallback = { year: now.getFullYear(), month: now.getMonth() };
-  if (typeof window === "undefined") return fallback;
-  const raw = sessionStorage.getItem(MONTH_KEY);
   const match = raw?.match(/^(\d{4})-(\d{1,2})$/);
-  if (!match) return fallback;
-  return { year: Number(match[1]), month: Number(match[2]) };
+  const month = match ? Number(match[2]) : NaN;
+  if (!match || month < 0 || month > 11) return { year: now.getFullYear(), month: now.getMonth() };
+  return { year: Number(match[1]), month };
 }
 
 /* ------------------------------------------------------------------------- */
@@ -150,7 +148,7 @@ function ContentCard({
   const own = media.filter((m) => m.postId === post.id);
   const cover = coverMediaFor(post, media);
   const ref = parseMediaRef(cover?.thumbnailUrl ?? cover?.url ?? null);
-  const scheduled = Boolean(post.scheduledAt);
+  const day = scheduledDayKey(post);
 
   return (
     <div
@@ -182,8 +180,8 @@ function ContentCard({
       <div className="space-y-1.5 p-2.5">
         <p className="truncate text-[12.5px] font-semibold text-ink">{post.name || "Untitled"}</p>
         <p className="text-[11px] text-ink-faint">
-          {scheduled ? (
-            <span className="text-sky-800">Scheduled · {formatNumericDate(post.scheduledAt!)}</span>
+          {day ? (
+            <span className="text-sky-800">Scheduled · {dayKeyToNumeric(day)}</span>
           ) : (
             "Unscheduled"
           )}
@@ -195,9 +193,9 @@ function ContentCard({
             className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-1 text-[10.5px] font-medium text-ink-soft hover:border-line-strong hover:text-ink"
           >
             <CalendarPlus className="size-3" aria-hidden="true" />
-            {scheduled ? "Reschedule" : "Schedule"}
+            {day ? "Reschedule" : "Schedule"}
           </button>
-          {scheduled && (
+          {day && (
             <button
               type="button"
               onClick={() => onUnschedule(post)}
@@ -226,10 +224,11 @@ export default function CalendarPage() {
   const { toast } = useToast();
 
   const today = new Date();
-  const [{ year, month }, setYearMonth] = useState(readStoredMonth);
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : localStorage.getItem(SELECTED_CLIENT_KEY),
-  );
+  // Remembered month (per session) and client (per browser), read without a
+  // hydration mismatch.
+  const [storedMonth, setStoredMonth] = useStoredValue(MONTH_KEY, "session");
+  const { year, month } = parseStoredMonth(storedMonth);
+  const [selectedClientId, setSelectedClientId] = useStoredValue(SELECTED_CLIENT_KEY);
   const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropDay, setDropDay] = useState<string | null>(null);
@@ -240,8 +239,7 @@ export default function CalendarPage() {
   const weeks = useMemo(() => monthGrid(year, month), [year, month]);
 
   function setMonthState(nextYear: number, nextMonth: number) {
-    sessionStorage.setItem(MONTH_KEY, `${nextYear}-${nextMonth}`);
-    setYearMonth({ year: nextYear, month: nextMonth });
+    setStoredMonth(`${nextYear}-${nextMonth}`);
   }
 
   // Validate persisted selection against existing clients.
@@ -262,20 +260,20 @@ export default function CalendarPage() {
   const byDay = useMemo(() => {
     const map = new Map<string, Post[]>();
     for (const item of clientItems) {
-      if (!item.scheduledAt) continue;
-      const key = localDayKey(item.scheduledAt);
+      const key = scheduledDayKey(item);
+      if (!key) continue;
       map.set(key, [...(map.get(key) ?? []), item]);
     }
-    for (const list of map.values()) {
-      list.sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime());
-    }
+    // Content packages (a day, no time yet) first, then posts by publishing time.
+    const order = (p: Post) => (p.scheduledAt ? new Date(p.scheduledAt).getTime() : -Infinity);
+    for (const list of map.values()) list.sort((a, b) => order(a) - order(b));
     return map;
   }, [clientItems]);
 
   const filteredContent = useMemo(() => {
     const list = contentItems.filter((item) => {
-      if (contentFilter === "unscheduled") return !item.scheduledAt;
-      if (contentFilter === "scheduled") return Boolean(item.scheduledAt);
+      if (contentFilter === "unscheduled") return !item.scheduledDay;
+      if (contentFilter === "scheduled") return Boolean(item.scheduledDay);
       return true;
     });
     return [...list].sort(
@@ -286,7 +284,6 @@ export default function CalendarPage() {
   if (status === "loading" || status === "idle" || !snapshot) return <PageSkeleton />;
 
   function selectClient(id: string) {
-    localStorage.setItem(SELECTED_CLIENT_KEY, id);
     setSelectedClientId(id);
   }
 
@@ -353,12 +350,10 @@ export default function CalendarPage() {
   /** Place content / move a post to a day. Resolves true when it saved. */
   async function attachToDay(item: Post, dayKey: string): Promise<boolean> {
     if (item.stage === "content") {
-      // Content only gets a DAY. The publishing time is chosen when the
-      // scheduler creates the actual post.
-      const [y, m, d] = dayKey.split("-").map(Number);
-      const iso = new Date(y, m - 1, d, 0, 0).toISOString();
+      // Content only gets a DAY — timezone-free, so everyone sees the same
+      // date. The publishing time is chosen when the post is created.
       const placed = await run(async (repo) => {
-        await repo.updatePost(item.id, { scheduledAt: iso });
+        await repo.updatePost(item.id, { scheduledDay: dayKey });
         await repo.recordActivity({
           clientId: item.clientId,
           type: "post_scheduled",
@@ -388,10 +383,12 @@ export default function CalendarPage() {
 
   async function unscheduleItem(item: Post) {
     const result = await run((repo) =>
-      repo.updatePost(item.id, {
-        scheduledAt: null,
-        status: item.stage === "content" || item.status !== "published" ? "draft" : item.status,
-      }),
+      repo.updatePost(
+        item.id,
+        item.stage === "content"
+          ? { scheduledDay: null, status: "draft" }
+          : { scheduledAt: null, status: item.status !== "published" ? "draft" : item.status },
+      ),
     );
     if (!result.ok) return;
     toast(item.stage === "content" ? "Content returned to Unscheduled" : "Post returned to Unscheduled");
@@ -427,7 +424,7 @@ export default function CalendarPage() {
     setMonthState(next.getFullYear(), next.getMonth());
   }
 
-  const scheduledCount = contentItems.filter((p) => p.scheduledAt).length;
+  const scheduledCount = contentItems.filter((p) => p.scheduledDay).length;
 
   return (
     <div className="space-y-5">
@@ -547,7 +544,7 @@ export default function CalendarPage() {
         aria-labelledby="content-heading"
         onDragOver={(e) => {
           const dragged = clientItems.find((p) => p.id === draggingId);
-          if (!dragged?.scheduledAt) return;
+          if (!dragged || !scheduledDayKey(dragged)) return;
           e.preventDefault();
           setOverUnschedule(true);
         }}
@@ -557,7 +554,7 @@ export default function CalendarPage() {
           const dragged = clientItems.find((p) => p.id === draggingId);
           setDraggingId(null);
           setOverUnschedule(false);
-          if (dragged?.scheduledAt) void unscheduleItem(dragged);
+          if (dragged && scheduledDayKey(dragged)) void unscheduleItem(dragged);
         }}
         className={cn(
           "rounded-xl border border-transparent transition-colors",
@@ -676,9 +673,8 @@ function PlaceContentDialog({
   onClose: () => void;
   onSave: (dayKey: string) => Promise<void>;
 }) {
-  const initial = post.scheduledAt
-    ? dayKeyToNumeric(localPartsFromIso(post.scheduledAt).day)
-    : dayKeyToNumeric(dayKeyFor(new Date()));
+  const day = scheduledDayKey(post);
+  const initial = dayKeyToNumeric(day ?? dayKeyFor(new Date()));
   const [dateText, setDateText] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

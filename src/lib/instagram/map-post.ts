@@ -1,4 +1,4 @@
-import { formatShortDate } from "@/lib/dates";
+import { dayKeyToDate, formatShortDate } from "@/lib/dates";
 import type { Client, Comment, Post, PostMedia } from "@/types/domain";
 import { parseMediaRef } from "./map-profile";
 import type { IgPlaceholderArt } from "./types";
@@ -67,7 +67,9 @@ export function buildIgPostDetail(
     ? formatShortDate(post.publishedAt)
     : post.scheduledAt
       ? `Scheduled for ${formatShortDate(post.scheduledAt)}`
-      : "Draft";
+      : post.scheduledDay
+        ? `Planned for ${formatShortDate(dayKeyToDate(post.scheduledDay).toISOString())}`
+        : "Draft";
 
   return {
     id: post.id,

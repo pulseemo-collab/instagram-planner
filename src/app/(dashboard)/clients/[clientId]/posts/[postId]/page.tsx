@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { ApprovalBadge, PostStatusBadge } from "@/components/ui/status-badge";
 import { useToast } from "@/components/ui/toast";
-import { formatDateTime } from "@/lib/dates";
+import { dayKeyToNumeric, formatDateTime } from "@/lib/dates";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
 import type { Post, PostMedia } from "@/types/domain";
@@ -125,10 +125,12 @@ export default function PostDetailPage() {
         </h2>
         <PostStatusBadge status={post.status} />
         <ApprovalBadge status={post.approvalStatus} />
-        {post.scheduledAt && (
+        {(post.scheduledAt || post.scheduledDay) && (
           <span className="inline-flex items-center gap-1 text-[12px] text-ink-faint">
             <CalendarClock className="size-3.5" aria-hidden="true" />
-            {formatDateTime(post.scheduledAt)}
+            {post.scheduledAt
+              ? formatDateTime(post.scheduledAt)
+              : `Placed on ${dayKeyToNumeric(post.scheduledDay!)}`}
           </span>
         )}
         <div className="ml-auto">

@@ -88,6 +88,7 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
             status: "draft",
             approvalStatus: "not_sent",
             scheduledAt: null,
+            scheduledDay: null,
             publishedAt: null,
             isPinned: false,
             gridPosition: existingCount,

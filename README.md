@@ -42,7 +42,7 @@ On Vercel, set the two public variables for **every environment that builds**: P
 1. Create a Supabase project.
 2. Apply the migrations in `supabase/migrations/` **in order** (SQL editor, `psql`, or `supabase db push`). Each later migration builds on the previous ones.
    - `0001`–`0005`: schema, RLS, storage buckets, content stage, video covers, review notifications.
-   - `0006`–`0007`: share-link security and atomic writes. Read [`docs/MIGRATION_0006.md`](docs/MIGRATION_0006.md) and [`docs/MIGRATION_0007.md`](docs/MIGRATION_0007.md) first: they must be deployed **together with the matching app version**, and the docs give the safe order, verification and rollback.
+   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days. Read the guides first ([0006](docs/MIGRATION_0006.md), [0007](docs/MIGRATION_0007.md), [0008](docs/MIGRATION_0008.md), [0009](docs/MIGRATION_0009.md)): they must be deployed **together with the matching app version**, and the guides give the safe order, verification and rollback.
 3. Check each applied migration with its script in `supabase/verify/`. They are safe on production: everything is rolled back. Rollback scripts live in `supabase/rollback/`, deliberately outside `migrations/`.
 4. In Supabase → Authentication → URL Configuration, set the **Site URL** to your deployment URL, so confirmation emails link back to the app.
 

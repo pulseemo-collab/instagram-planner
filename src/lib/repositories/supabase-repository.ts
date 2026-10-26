@@ -118,6 +118,7 @@ function mapPost(row: Row): Post {
     status: asStr(row.status) as Post["status"],
     approvalStatus: asStr(row.approval_status) as Post["approvalStatus"],
     scheduledAt: asStrOrNull(row.scheduled_at),
+    scheduledDay: asStrOrNull(row.scheduled_day),
     publishedAt: asStrOrNull(row.published_at),
     isPinned: asBool(row.is_pinned),
     gridPosition: asNum(row.grid_position),
@@ -141,6 +142,7 @@ function postToRow(patch: Partial<Post>): Row {
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.approvalStatus !== undefined) row.approval_status = patch.approvalStatus;
   if (patch.scheduledAt !== undefined) row.scheduled_at = patch.scheduledAt;
+  if (patch.scheduledDay !== undefined) row.scheduled_day = patch.scheduledDay;
   if (patch.publishedAt !== undefined) row.published_at = patch.publishedAt;
   if (patch.isPinned !== undefined) row.is_pinned = patch.isPinned;
   if (patch.gridPosition !== undefined) row.grid_position = patch.gridPosition;

@@ -16,7 +16,6 @@ Access levels: **Public** (no session), **Session** (demo session or Supabase lo
 | `/calendar` | **Main planning workspace** (single client, Content → Post) | Session | Client picker + persisted switcher (no "all clients"), month nav (persisted per session), Content section with minimal **Add content** dialog (name + original media only) and All/Unscheduled/Scheduled filters, drag content → day (date only, DD/MM/YYYY), chips between days, drop-to-unschedule, date-only Schedule dialog (touch/keyboard) | Repository (`posts.stage` content/post; selection in localStorage, month in sessionStorage) | ✅ | ✅ |
 | `/previews` | Share-link management | Session | Copy, open, disable/enable, regenerate token; status/comment/approval overview | Repository (`share_links` + derived) | ✅ | ✅ |
 | `/settings` | User & data settings | Session | Display name, default theme, approval defaults, timezone display, mode indicator, restore/wipe demo data, sign out | Repository (`profiles`) + localStorage prefs | ✅ | ✅ (wipe/restore demo-only) |
-| `/preview` | Design playground (static sample profile) | Session | Light/dark toggle on a fixed sample profile | Static sample data | ✅ | ✅ |
 | `/share/[shareToken]` | Public client review page | Reviewer | View profile + posts, name/email form, approve, request changes, comment, approve all | Token-scoped repository access | ✅ (same-browser only) | ✅ (truly public) |
 | `/share/<invalid>` | Error state | Public | Polished "Preview not found / disabled / expired" screens | — | ✅ | ✅ |
 

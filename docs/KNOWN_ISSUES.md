@@ -17,15 +17,6 @@ limitations, not defects.*
   the user about this when copying a demo link — see suggestion S-2 in the audit
   report.
 
-## LIMIT-002 — Decorative top-bar search
-
-- **Status:** Confirmed (scheduled: audit issue #22)
-- The global top-bar **search field** (and its mobile search button) filters
-  nothing, though it looks interactive. Documented in the user manual; see
-  suggestion S-3.
-- *Resolved part:* the **notification bell** is fully functional since the review
-  notifications release (unread badge, panel, mark-read, live updates).
-
 ## LIMIT-004 — Comment "resolve" flag has no creator UI (by design of the calendar redesign)
 
 - **Status:** Product decision (calendar-workspace redesign, July 2026)

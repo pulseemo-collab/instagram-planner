@@ -7,8 +7,10 @@ import { Dialog } from "@/components/ui/dialog";
 import { TextField, ToggleField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/dates";
+import { PREFS_KEY, approvalFlowFlags, parsePreferences } from "@/lib/preferences";
 import { useAction } from "@/lib/store/hooks";
 import { shareLinkCreated, shareLinkSaved } from "@/lib/store/patches";
+import { useStoredValue } from "@/lib/use-stored-value";
 import type { ShareLink } from "@/types/domain";
 
 interface ShareDialogProps {
@@ -30,8 +32,14 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
   const [busy, setBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expiresDay, setExpiresDay] = useState("");
-  const [allowComments, setAllowComments] = useState(true);
-  const [allowApproval, setAllowApproval] = useState(true);
+  // Start from Settings → Defaults ("default approval flow"); a switch the
+  // user flips overrides it for links created from this dialog.
+  const [storedPrefs] = useStoredValue(PREFS_KEY);
+  const defaults = approvalFlowFlags(parsePreferences(storedPrefs).defaultApprovals);
+  const [commentsOverride, setAllowComments] = useState<boolean | null>(null);
+  const [approvalOverride, setAllowApproval] = useState<boolean | null>(null);
+  const allowComments = commentsOverride ?? defaults.allowComments;
+  const allowApproval = approvalOverride ?? defaults.allowApproval;
 
   const links = shareLinks.filter((l) => l.clientId === clientId);
 

@@ -70,6 +70,26 @@ export function localDayKey(iso: string): string {
   ).padStart(2, "0")}`;
 }
 
+/**
+ * The calendar day an item sits on: a content package's timezone-free day,
+ * or the local day of a completed post's publishing moment. Null when the
+ * item isn't on the calendar.
+ */
+export function scheduledDayKey(item: {
+  stage: "content" | "post";
+  scheduledAt: string | null;
+  scheduledDay: string | null;
+}): string | null {
+  if (item.stage === "content") return item.scheduledDay;
+  return item.scheduledAt ? localDayKey(item.scheduledAt) : null;
+}
+
+/** Local midnight of a "yyyy-mm-dd" day key (for display formatting). */
+export function dayKeyToDate(dayKey: string): Date {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 export function dayKeyFor(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
     date.getDate(),

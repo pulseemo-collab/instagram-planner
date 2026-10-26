@@ -11,6 +11,7 @@ import { ToastProvider, useToast } from "@/components/ui/toast";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
 import { buildIgProfile } from "@/lib/instagram/map-profile";
 import { resolveMediaRefs } from "@/lib/media/resolve-media";
+import { useStoredValue } from "@/lib/use-stored-value";
 import { getRepository, isShareError } from "@/lib/repositories";
 import type { ShareError, ShareResolution } from "@/lib/repositories/types";
 import { APPROVAL_STATUS_LABELS, type ClientBundle } from "@/types/domain";
@@ -22,14 +23,13 @@ interface Reviewer {
   email: string;
 }
 
-function loadReviewer(): Reviewer {
+function parseReviewer(raw: string | null): Reviewer {
   try {
-    const raw = localStorage.getItem(REVIEWER_KEY);
-    if (raw) return JSON.parse(raw) as Reviewer;
+    const stored = raw ? (JSON.parse(raw) as Partial<Reviewer>) : null;
+    return { name: String(stored?.name ?? ""), email: String(stored?.email ?? "") };
   } catch {
-    // fall through
+    return { name: "", email: "" };
   }
-  return { name: "", email: "" };
 }
 
 const shareErrorCopy: Record<ShareError, { title: string; body: string }> = {
@@ -91,9 +91,11 @@ function SharePageInner() {
   const [resolution, setResolution] = useState<ShareResolution | ShareError | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [openPostId, setOpenPostId] = useState<string | null>(null);
-  const [reviewer, setReviewer] = useState<Reviewer>(() =>
-    typeof window === "undefined" ? { name: "", email: "" } : loadReviewer(),
-  );
+  // Details remembered from an earlier visit (read without a hydration
+  // mismatch) until the reviewer edits them.
+  const [storedReviewer, setStoredReviewer] = useStoredValue(REVIEWER_KEY);
+  const [reviewerDraft, setReviewerDraft] = useState<Reviewer | null>(null);
+  const reviewer = reviewerDraft ?? parseReviewer(storedReviewer);
   const [feedback, setFeedback] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -185,7 +187,7 @@ function SharePageInner() {
     const error = validateReviewer(reviewer);
     setFormError(error);
     if (error) return false;
-    localStorage.setItem(REVIEWER_KEY, JSON.stringify(reviewer));
+    setStoredReviewer(JSON.stringify(reviewer));
     return true;
   }
 
@@ -360,14 +362,14 @@ function SharePageInner() {
               <TextField
                 label="Name"
                 value={reviewer.name}
-                onChange={(e) => setReviewer((r) => ({ ...r, name: e.target.value }))}
+                onChange={(e) => setReviewerDraft({ ...reviewer, name: e.target.value })}
                 autoComplete="name"
               />
               <TextField
                 label="Email"
                 type="email"
                 value={reviewer.email}
-                onChange={(e) => setReviewer((r) => ({ ...r, email: e.target.value }))}
+                onChange={(e) => setReviewerDraft({ ...reviewer, email: e.target.value })}
                 autoComplete="email"
               />
             </div>

@@ -123,7 +123,14 @@ export function PostForm({
   // "Conversion": the scheduler is turning a designer content package into a
   // real Instagram post for the first time.
   const conversion = post?.stage === "content";
-  const scheduledParts = post?.scheduledAt ? localPartsFromIso(post.scheduledAt) : null;
+  // A content package carries a timezone-free day; a post its publishing moment.
+  const scheduledParts = conversion
+    ? post?.scheduledDay
+      ? { day: post.scheduledDay, time: "" }
+      : null
+    : post?.scheduledAt
+      ? localPartsFromIso(post.scheduledAt)
+      : null;
 
   const [name, setName] = useState(post?.name ?? "");
   const [type, setType] = useState<PostType>(() => {
@@ -284,6 +291,8 @@ export function PostForm({
           : "draft") as Post["status"],
       approvalStatus,
       scheduledAt,
+      // Completed posts have a publishing time, never a content day.
+      scheduledDay: null,
       isPinned,
     };
 

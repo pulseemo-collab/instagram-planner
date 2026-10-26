@@ -1,3 +1,4 @@
+import { localDayKey } from "@/lib/dates";
 import { createId, createToken, slugify } from "@/lib/id";
 import {
   idbClearAll,
@@ -87,6 +88,35 @@ function localRefs(state: WorkspaceSnapshot): Set<string> {
     return url;
   });
   return refs;
+}
+
+/**
+ * Bring a stored state up to the current shape. Content packages saved
+ * before timezone-free days existed kept their day as local midnight in
+ * `scheduledAt`; demo data never leaves this browser, so its local day is
+ * exactly the day it was dropped on.
+ */
+function normalizeStored(state: WorkspaceSnapshot): WorkspaceSnapshot {
+  if (!Array.isArray(state.notifications)) state.notifications = [];
+  for (const post of state.posts) {
+    if (post.scheduledDay !== undefined) continue;
+    if (post.stage === "content" && post.scheduledAt) {
+      post.scheduledDay = localDayKey(post.scheduledAt);
+      post.scheduledAt = null;
+    } else {
+      post.scheduledDay = null;
+    }
+  }
+  return state;
+}
+
+/** True when a stored state predates the current shape and must be repaired. */
+function needsRepair(state: WorkspaceSnapshot): boolean {
+  return (
+    !Array.isArray(state.notifications) ||
+    state.posts.some((post) => post.scheduledDay === undefined) ||
+    hasInlineMedia(state)
+  );
 }
 
 function hasInlineMedia(state: WorkspaceSnapshot): boolean {
@@ -266,21 +296,18 @@ export class DemoRepository implements Repository {
 
   private async loadStored(): Promise<WorkspaceSnapshot> {
     const stored = await idbGetState<WorkspaceSnapshot>();
-    if (!stored) return createSeedSnapshot();
-    if (!Array.isArray(stored.notifications)) stored.notifications = [];
-    return stored;
+    return stored ? normalizeStored(stored) : createSeedSnapshot();
   }
 
   /** Latest stored workspace (cached until this or another tab writes). */
   private async read(): Promise<WorkspaceSnapshot> {
     if (this.cache) return this.cache;
     const stored = await idbGetState<WorkspaceSnapshot>();
-    if (stored && !hasInlineMedia(stored)) {
-      if (!Array.isArray(stored.notifications)) stored.notifications = [];
+    if (stored && !needsRepair(stored)) {
       this.cache = stored;
       return stored;
     }
-    // First run (seed it) or a state saved with inline media (repair it).
+    // First run (seed it) or a state saved by an older version (repair it).
     await this.write(() => undefined);
     return this.cache ?? this.loadStored();
   }

@@ -6,6 +6,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { SelectField, TextField } from "@/components/ui/field";
 import { UploadDropzone, type UploadedItem } from "@/components/uploads/upload-dropzone";
 import { parseMediaRef } from "@/lib/instagram/map-profile";
+import { getPreferences } from "@/lib/preferences";
 import { MediaArt } from "@/components/instagram/media-art";
 import type { AccountType, Client, Theme } from "@/types/domain";
 
@@ -50,7 +51,8 @@ function ClientFormDialogInner({ onClose, onSubmit, client }: Omit<ClientFormDia
     profileName: client?.profileName ?? "",
     avatarUrl: client?.avatarUrl ?? null,
     accountType: client?.accountType ?? "business",
-    theme: client?.theme ?? "light",
+    // New clients start with the Settings → Defaults preview theme.
+    theme: client?.theme ?? getPreferences().defaultTheme,
   }));
   const [errors, setErrors] = useState<Partial<Record<keyof ClientFormValues, string>>>({});
   const [busy, setBusy] = useState(false);

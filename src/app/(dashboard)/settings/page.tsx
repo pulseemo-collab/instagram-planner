@@ -13,7 +13,8 @@ import { getRepository } from "@/lib/repositories";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
 import { userRenamed } from "@/lib/store/patches";
-import { getPreferences, setPreferences, type AppPreferences } from "@/lib/preferences";
+import { PREFS_KEY, parsePreferences, type AppPreferences } from "@/lib/preferences";
+import { useStoredValue } from "@/lib/use-stored-value";
 
 export default function SettingsPage() {
   const { status, snapshot, mode } = useWorkspace();
@@ -23,9 +24,10 @@ export default function SettingsPage() {
 
   // null = "not edited yet" — the input falls back to the stored display name.
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<AppPreferences>(() =>
-    typeof window === "undefined" ? { defaultTheme: "light", defaultApprovals: "comments_and_approvals" } : getPreferences(),
-  );
+  // Read via useSyncExternalStore: no hydration mismatch, and other open
+  // dialogs/tabs see changes immediately.
+  const [storedPrefs, setStoredPrefs] = useStoredValue(PREFS_KEY);
+  const prefs = parsePreferences(storedPrefs);
   const [resetOpen, setResetOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,11 +37,7 @@ export default function SettingsPage() {
   const displayName = displayNameDraft ?? snapshot.user.displayName;
 
   function updatePrefs(patch: Partial<AppPreferences>) {
-    setPrefs((current) => {
-      const next = { ...current, ...patch };
-      setPreferences(next);
-      return next;
-    });
+    setStoredPrefs(JSON.stringify({ ...prefs, ...patch }));
   }
 
   async function saveProfile() {
