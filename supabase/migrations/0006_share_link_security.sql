@@ -22,7 +22,7 @@
 --
 -- The whole migration runs in one transaction: a failure applies nothing.
 -- Deploy the matching app version immediately after applying (see
--- docs/MIGRATION_0006.md). Rollback: supabase/rollback/0006_rollback.sql.
+-- docs/DEPLOY_GUIDE.md). Rollback: supabase/rollback/0006_rollback.sql.
 
 begin;
 

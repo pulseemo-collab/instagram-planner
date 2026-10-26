@@ -2,6 +2,17 @@
 
 The QA suite lives in `tests/e2e/` with configuration in `playwright.config.ts`.
 
+> **All test suites at a glance** (CI runs every one of them on push and pull request,
+> see `.github/workflows/ci.yml`):
+>
+> | Command | What | Needs |
+> | --- | --- | --- |
+> | `npm run test:e2e` | This Playwright suite (demo mode, desktop + mobile, axe) | Chromium |
+> | `npm run test:unit` | Vitest unit tests in `tests/unit/` (dates, mappers, search, store ordering, DemoRepository with an in-memory IndexedDB, …) | — |
+> | `npm run test:sql` | `scripts/sql-test.mjs`: a throwaway PostgreSQL cluster with Supabase stand-ins; applies all migrations and runs the verify scripts, the rollback chain and atomicity checks | PostgreSQL 15+ binaries (`PG_BIN`, or on `PATH`) |
+> | `npm run test:live` | `tests/live/` against a **local** Supabase (`supabase start`) — real Auth, RLS, RPCs, Storage, Realtime | Docker + Supabase CLI; runs in CI only. The config refuses any non-local Supabase URL |
+> | `npm run lint`, `npm run typecheck` | ESLint, TypeScript | — |
+
 ## One-time setup
 
 ```bash

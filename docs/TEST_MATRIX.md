@@ -63,3 +63,26 @@ exercised to protect production data).
 | Double-submit protection | create client | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Single client created |
 | Unsaved-edit refresh behavior | workspace | ✅ | ➖ | ➖ | ✅ | 📄 | Pass | Draft intentionally discarded, documented |
 | Missing client/post/token error states | various | ✅ | ➖ | ➖ | ✅ | 🟡 | Pass | Friendly not-found screens |
+
+## Added coverage — October 2026 (audit-fixes)
+
+The table above is the July 2026 matrix. These areas were added with the audit fixes
+(spec files in `tests/e2e/`, `tests/unit/`, `tests/live/`):
+
+| Area | Where | Demo | Live |
+| --- | --- | --- | --- |
+| Link permissions (comments/approvals off), drafts hidden from reviewers, companion comment | `10-sharing`, `tests/live` | ✅ | CI |
+| Share token isolation: owner sees the right client on their own link | `14-review-notifications`, `tests/live` | ✅ | CI |
+| Rate limit per link, "Approve all" partial progress | unit `demo-repository`, `tests/live`, SQL verify 0006 | ✅ | CI |
+| Demo integrity: no inline images stored, old data repaired, media cleanup, two tabs | `15-demo-integrity`, unit `demo-repository` | ✅ | ➖ |
+| Storage cleanup: only unreferenced files, owner folder only | `tests/live` | ➖ | CI |
+| Error states: load failure + Retry, refresh notice, failed save toast | `16-error-handling` | ✅ | ➖ |
+| Ordered refreshes, local patches (UI matches after reload) | unit `store-ordering`, `18-patched-mutations` | ✅ | ➖ |
+| Open-redirect protection on `?next=` | `01-auth`, unit `redirect` | ✅ | ➖ |
+| Signup with email confirmation ("Check your inbox") | `tests/live` | ➖ | CI |
+| Top-bar search (⌘K/Ctrl+K, mobile), settings defaults, hydration-safe storage | `19-search-defaults` | ✅ | ➖ |
+| Timezone-free content days (Auckland → Los Angeles), old-data repair | `20-content-days`, SQL verify 0009 | ✅ | CI |
+| Migrations 0006–0009: verify, rollback chain, atomicity | `npm run test:sql`; CI runs verify on real Supabase | ➖ | ✅ / CI |
+
+"CI" = the GitHub Actions **live** job against a local Supabase (`supabase start`). It has
+not run yet, because the branch hasn't been pushed.

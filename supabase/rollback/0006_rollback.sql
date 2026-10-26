@@ -3,7 +3,7 @@
 -- Restores the exact pre-0006 state (0001 + 0005 definitions). Kept OUTSIDE
 -- supabase/migrations/ so `supabase db push` never runs it. After running it,
 -- redeploy the pre-0006 app version — the 0006 app relies on the RPCs that
--- this script drops. See docs/MIGRATION_0006.md.
+-- this script drops. See docs/DEPLOY_GUIDE.md §5.
 --
 -- NOTE: this re-opens the issues 0006 fixed (link flags not enforced,
 -- reviewer emails and draft posts readable with a token, no rate limit).

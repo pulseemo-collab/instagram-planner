@@ -10,7 +10,7 @@
 -- Run with psql to see every PASS line:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/verify/0006_verify.sql
 -- The first failing rule stops the script with "FAIL n: …".
--- See docs/MIGRATION_0006.md for what each check proves.
+-- See docs/DEPLOY_GUIDE.md (Appendix B) for what each check proves.
 
 begin;
 

@@ -42,7 +42,7 @@ On Vercel, set the two public variables for **every environment that builds**: P
 1. Create a Supabase project.
 2. Apply the migrations in `supabase/migrations/` **in order** (SQL editor, `psql`, or `supabase db push`). Each later migration builds on the previous ones.
    - `0001`–`0005`: schema, RLS, storage buckets, content stage, video covers, review notifications.
-   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days. Read the guides first ([0006](docs/MIGRATION_0006.md), [0007](docs/MIGRATION_0007.md), [0008](docs/MIGRATION_0008.md), [0009](docs/MIGRATION_0009.md)): they must be deployed **together with the matching app version**, and the guides give the safe order, verification and rollback.
+   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days. Read [`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md) first: they must be deployed **together with the matching app version**, and the guide gives the backup, staged Vercel deploy, verification and rollback steps.
 3. Check each applied migration with its script in `supabase/verify/`. They are safe on production: everything is rolled back. Rollback scripts live in `supabase/rollback/`, deliberately outside `migrations/`.
 4. In Supabase → Authentication → URL Configuration, set the **Site URL** to your deployment URL, so confirmation emails link back to the app.
 
@@ -50,15 +50,17 @@ There is no seed data for live mode; the sample clients exist only in demo mode.
 
 ## Tests
 
-End-to-end tests use Playwright (desktop and mobile Chromium) with axe accessibility scans. They always run against a **demo-mode** build and never touch a Supabase project.
+| Command | What |
+|---|---|
+| `npm run test:unit` | Vitest unit tests (`tests/unit/`): dates, mappers, search, store ordering, the demo repository against an in-memory IndexedDB |
+| `npm run test:e2e` | Playwright end-to-end tests (`tests/e2e/`, desktop + mobile Chromium, axe scans) against a **demo-mode** build. Run `npx playwright install chromium` once first |
+| `npm run test:sql` | SQL/RLS tests: a throwaway PostgreSQL cluster (needs PostgreSQL 15+ binaries; set `PG_BIN` if they're not on `PATH`) that applies all migrations and runs the verify, rollback-chain and atomicity checks |
+| `npm run test:live` | Live-mode tests (`tests/live/`) against a **local** Supabase (`supabase start`, Docker). They run in CI; the config refuses any non-local Supabase URL |
+| `npm run lint` · `npm run typecheck` | ESLint · TypeScript |
 
-```bash
-npx playwright install chromium   # once
-npx playwright test               # builds + serves the app automatically
-npx playwright show-report
-```
+None of them ever touches a hosted Supabase project. GitHub Actions (`.github/workflows/ci.yml`) runs all of them on every push and pull request.
 
-Normal runs write screenshots and reports to `test-results/` and `playwright-report/`, both git-ignored. To refresh the committed screenshots in `docs/qa-evidence/`, set `UPDATE_QA_EVIDENCE=1`. Details: [`docs/PLAYWRIGHT_TESTING.md`](docs/PLAYWRIGHT_TESTING.md).
+E2E runs write screenshots and reports to `test-results/` and `playwright-report/`, both git-ignored. To refresh the committed screenshots in `docs/qa-evidence/`, set `UPDATE_QA_EVIDENCE=1`. Details: [`docs/PLAYWRIGHT_TESTING.md`](docs/PLAYWRIGHT_TESTING.md).
 
 ## Project structure
 
