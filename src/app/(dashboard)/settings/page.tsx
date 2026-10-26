@@ -12,6 +12,7 @@ import { authMode, endDemoSession } from "@/lib/auth/session";
 import { getRepository } from "@/lib/repositories";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
+import { userRenamed } from "@/lib/store/patches";
 import { getPreferences, setPreferences, type AppPreferences } from "@/lib/preferences";
 
 export default function SettingsPage() {
@@ -43,8 +44,9 @@ export default function SettingsPage() {
 
   async function saveProfile() {
     setBusy(true);
-    const result = await run((repo) =>
-      repo.updateUser({ displayName: displayName.trim() || "Studio owner" }),
+    const result = await run(
+      (repo) => repo.updateUser({ displayName: displayName.trim() || "Studio owner" }),
+      userRenamed,
     );
     setBusy(false);
     if (result.ok) toast("Profile saved");

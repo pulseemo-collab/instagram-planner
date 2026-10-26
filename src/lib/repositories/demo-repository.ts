@@ -400,9 +400,10 @@ export class DemoRepository implements Repository {
       const copy: Client = {
         ...source,
         id: createId(),
-        name: `${source.name} copy`,
+        // Same trimming as the duplicate_client SQL function (120 / 60 limits).
+        name: `${source.name.slice(0, 115)} copy`,
         slug: slugify(`${source.name}-copy`),
-        instagramUsername: `${source.instagramUsername}.copy`,
+        instagramUsername: `${source.instagramUsername.slice(0, 55)}.copy`,
         createdAt: timestamp,
         updatedAt: timestamp,
       };

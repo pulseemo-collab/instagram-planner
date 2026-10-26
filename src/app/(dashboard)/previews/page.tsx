@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/dates";
 import { parseMediaRef } from "@/lib/instagram/map-profile";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
+import { shareLinkSaved } from "@/lib/store/patches";
 import type { ShareLink } from "@/types/domain";
 
 function linkState(link: ShareLink): { label: string; className: string } {
@@ -119,8 +120,9 @@ export default function PreviewsPage() {
               <Button
                 size="sm"
                 onClick={async () => {
-                  const result = await run((repo) =>
-                    repo.updateShareLink(link.id, { isActive: !link.isActive }),
+                  const result = await run(
+                    (repo) => repo.updateShareLink(link.id, { isActive: !link.isActive }),
+                    shareLinkSaved,
                   );
                   if (result.ok) toast(link.isActive ? "Link disabled" : "Link enabled");
                 }}
@@ -130,7 +132,7 @@ export default function PreviewsPage() {
               <Button
                 size="sm"
                 onClick={async () => {
-                  const result = await run((repo) => repo.regenerateShareToken(link.id));
+                  const result = await run((repo) => repo.regenerateShareToken(link.id), shareLinkSaved);
                   if (result.ok) toast("Token regenerated — the old URL stopped working");
                 }}
               >

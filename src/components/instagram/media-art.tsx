@@ -18,6 +18,10 @@ export function MediaArt({ art, imageUrl, alt = "", className }: MediaArtProps) 
       <img
         src={imageUrl}
         alt={alt}
+        // Grids can hold many full-size uploads: fetch/decode them only as
+        // they approach the viewport, off the main thread.
+        loading="lazy"
+        decoding="async"
         className={`absolute inset-0 h-full w-full object-cover ${className ?? ""}`}
       />
     );

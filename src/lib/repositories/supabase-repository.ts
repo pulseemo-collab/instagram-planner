@@ -445,33 +445,11 @@ export class SupabaseRepository implements Repository {
   }
 
   async duplicateClient(id: string): Promise<Client> {
-    const snapshot = await this.loadSnapshot();
-    const source = snapshot.clients.find((c) => c.id === id);
-    if (!source) throw new Error("Client not found");
-    const copy = await this.createClient({
-      ...source,
-      name: `${source.name} copy`,
-      instagramUsername: `${source.instagramUsername}.copy`,
-    });
-    for (const highlight of snapshot.highlights.filter((h) => h.clientId === id)) {
-      await this.createHighlight({ ...highlight, clientId: copy.id });
-    }
-    for (const post of snapshot.posts.filter((p) => p.clientId === id)) {
-      const media = snapshot.media
-        .filter((m) => m.postId === post.id)
-        .map((m) => ({
-          mediaType: m.mediaType,
-          url: m.url,
-          thumbnailUrl: m.thumbnailUrl,
-          coverSource: m.coverSource ?? null,
-          coverTimestamp: m.coverTimestamp ?? null,
-          width: m.width,
-          height: m.height,
-          position: m.position,
-        }));
-      await this.createPost({ ...post, clientId: copy.id }, media);
-    }
-    return copy;
+    // One transaction in Postgres (migration 0008): client, highlights, posts
+    // and media are copied together or not at all.
+    const { data, error } = await this.sb.rpc("duplicate_client", { p_client_id: id });
+    throwIf(error);
+    return mapClient(data as Row);
   }
 
   async deleteClient(id: string): Promise<void> {
