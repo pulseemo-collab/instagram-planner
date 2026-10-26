@@ -279,18 +279,29 @@ export class SupabaseRepository implements Repository {
   }
 
   /**
-   * Best-effort removal of Storage files that no row references any more
-   * (after a delete, or a replaced avatar / cover / media list). Runs only
-   * after the database change succeeded; a failure here never fails the
-   * operation, and nothing is removed if the reference check itself fails.
-   * Files shared between rows (e.g. a duplicated client) stay until the last
-   * reference is gone.
+   * Best-effort removal of the Storage files that belonged to rows just
+   * deleted or replaced. `candidates` are ONLY the URLs those rows held,
+   * read before the change — this never lists or sweeps a bucket, so uploads
+   * that aren't saved in any row yet (e.g. in progress in another tab) are
+   * never touched. A candidate is removed only if:
+   * - it is one of this project's media-bucket URLs,
+   * - its path is inside the signed-in owner's own folder (`<user id>/…`),
+   * - and, re-checked after the change, no row references it any more
+   *   (files shared between rows, e.g. a duplicated client, stay).
+   * Runs only after the database change succeeded; a failure here never fails
+   * the operation, and nothing is removed if the reference check fails.
    */
   private async removeUnreferencedMedia(candidates: Array<string | null | undefined>): Promise<void> {
-    const urls = [...new Set(candidates)].filter(
-      (url): url is string => this.storageObject(url) !== null,
-    );
     try {
+      const { data: auth } = await this.sb.auth.getUser();
+      const ownerFolder = auth.user ? `${auth.user.id}/` : null;
+      if (!ownerFolder) return;
+      const urls = [...new Set(candidates)].filter((url): url is string => {
+        const object = this.storageObject(url);
+        return (
+          object !== null && object.path.startsWith(ownerFolder) && !object.path.includes("..")
+        );
+      });
       for (let start = 0; start < urls.length; start += 40) {
         const chunk = urls.slice(start, start + 40);
         const checks = await Promise.all([
@@ -304,6 +315,8 @@ export class SupabaseRepository implements Repository {
         const stillUsed = new Set(
           checks.flatMap((check) => ((check.data ?? []) as Row[]).map((row) => String(row.url))),
         );
+        // Exact paths only — storage.remove() deletes the listed objects and
+        // nothing else (and Storage RLS also limits it to the owner's folder).
         const byBucket = new Map<string, string[]>();
         for (const url of chunk) {
           if (stillUsed.has(url)) continue;
