@@ -1,5 +1,7 @@
 # Migration 0006 — Share-link security
 
+> **Status: not applied anywhere.** Per the plan, 0006 will be applied **together with the migrations from later phases, in one deploy**. At the end of the audit fixes this file will be folded into a single combined deploy guide. Until then, treat this as the 0006 reference.
+
 **Files**
 
 | File | Purpose |
@@ -38,7 +40,12 @@
    where proname in ('handle_review_approval', 'handle_review_comment', 'notify_review_event');
    ```
 2. **Have the matching app build ready to ship.** It's the code on the `audit-fixes` branch at the Phase 2 commit or later. The app and the database must change **together** (see §2).
-3. **Pick a quiet moment.** For the minute or two between applying the migration and the new deployment going live, share pages show "Preview not found". Owner pages keep working throughout.
+3. **Check the Supabase env vars on Vercel for every environment you'll build in.** The app's demo/live mode is frozen **at build time** (`next.config.ts`). A deployment built without the variables runs in **demo mode** even if the variables are added later.
+   - Vercel → your project → *Settings* → *Environment Variables*: both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` must list **Production**. They must also list **Preview** if you want to test a preview deployment against Supabase. Otherwise every preview builds in demo mode, and testing it proves nothing about live mode.
+   - Or with the CLI: `vercel env ls` shows which environments each variable is set for.
+   - `SUPABASE_SERVICE_ROLE_KEY` is not used by the app and should **not** be on Vercel.
+   - **How to tell a deployment's mode:** open its `/login` page. A **"Continue in demo mode"** button means it was built in demo mode. A live-mode build has only the email/password form. Once signed in, *Settings → Data* says "Connected to **Supabase**".
+4. **Pick a quiet moment.** Share pages show "Preview not found" from the moment the migration is applied until the new deployment is live. With the staged-deployment order in §2 that gap is seconds. Owner pages keep working throughout.
 
 ---
 
@@ -72,11 +79,25 @@ Notes:
 
 ## 2. Apply it — exact deploy order
 
-The currently deployed app reads tables directly, and the new app calls the new RPCs. Whichever side changes first, share pages fail until the other catches up. So do these steps **back to back**:
+The currently deployed app reads tables directly, and the new app calls the new RPCs. Whichever side changes first, share pages fail until the other catches up. So the new app must be **fully built before** you touch the database, and going live must be **instant**.
 
-1. **Prepare the deployment *before* touching the database.** Push the branch and let Vercel finish a **Preview deployment** of the new code, but don't promote it yet.
-   - The preview's share pages will fail until step 2, which is expected.
-   - The preview must be built with the production Supabase env vars, because the app's mode is frozen at build time.
+**What Vercel's promote options actually do** (checked against Vercel's docs, Oct 2026):
+
+| Option | Rebuild? | Env vars used | Share-link downtime after the migration |
+|---|---|---|---|
+| **Promote a *staged production* deployment** | **No** ("Vercel will instantly promote the deployment; it doesn't require a rebuild") | Production; it was built as a production deployment | **Seconds** ✅ recommended |
+| Promote a *preview* deployment | **Yes**: "triggers a complete rebuild with production environment variables" | Production (preview values are never used in production) | **A full Vercel build**: install + `next build`, typically a few minutes. Check the *Build Duration* of your recent deployments |
+| Merge to the production branch (auto-deploy) | Yes, a normal build | Production | A full build, same as above |
+
+So **don't** use "promote a preview" for this. Its rebuild starts only when you click Promote, which is after the migration, and share links stay broken for the whole build.
+
+### Recommended order (staged production deployment)
+
+1. **Build a staged production deployment** of the new code, *before* touching the database. It's built with production env vars but not attached to your domain. Use **one** of:
+   - **CLI** (from the project folder, on the `audit-fixes` code): `vercel --prod --skip-domain`. It prints the deployment URL.
+   - **Dashboard:** *Settings* → *Environments* → *Production* → *Branch Tracking* → turn **off** "Auto-assign Custom Production Domains". Then merge or push to your production branch. The resulting production deployment is **Staged**, not Current.
+
+   Wait until it shows **Ready**. Open its own deployment URL and check `/login`: there should be no "Continue in demo mode" button, which proves it was built in live mode (see §0.3). Its share pages will fail until step 2; that's expected.
 2. **Apply the migration.** Use **one** of these:
    - **SQL editor** (Dashboard → *SQL Editor*): paste the whole of `supabase/migrations/0006_share_link_security.sql` and click *Run*. It must end with `COMMIT` and no error.
    - **psql:**
@@ -86,9 +107,12 @@ The currently deployed app reads tables directly, and the new app calls the new 
    - **`supabase db push`**: only if 0001–0005 were also applied with the CLI. If you applied them by hand in the SQL editor, the CLI has no migration history and would try to re-run 0001. In that case use one of the two options above. The file has its own `begin; … commit;`, and the CLI may print a harmless "transaction already in progress" warning (untested here).
 
    If anything fails, the whole migration is rolled back automatically. Fix the cause and re-run.
-3. **Immediately put the new app live.** On Vercel → *Deployments*, open the Preview from step 1 → **Promote to Production**. That takes seconds and needs no rebuild. Merging to the production branch also works, but then you wait for a full build.
-4. **Verify** (see §3).
-5. **Smoke test** in a private window: open an existing share link and leave a comment. Then check that a link with comments off shows no comment button.
+3. **Immediately promote the staged deployment.** In the dashboard: *Deployments* → the staged deployment → **⋯** → **Promote**. Or run `vercel promote <deployment-url>`. It's instant, with no rebuild.
+4. **If you used the dashboard toggle in step 1, turn "Auto-assign Custom Production Domains" back on.** Otherwise every future production deployment will also wait for a manual promote.
+5. **Verify** (see §3).
+6. **Smoke test** in a private window: open an existing share link and leave a comment. Then check that a link with comments off shows no comment button.
+
+**If you can't use a staged deployment,** the next-best order is: merge to the production branch first, and wait for that production build to reach *Ready*. Share links stay working during the build, because the old deployment keeps serving until the new one is ready. The moment it goes live, share links break until you apply the migration, so apply it **right then**. Downtime is the minutes it takes you to run the SQL. This is better than promoting a preview, whose rebuild happens *after* the migration.
 
 **Reviewers who already have a share page open must refresh it.** Their tab is still running the old code: after step 2 it can't read new data, and anything they submit fails with "Something went wrong… please try again". A refresh loads the new version, and nothing they had already submitted is lost. Owner dashboards don't need a refresh.
 
@@ -178,7 +202,7 @@ Use this only if the new behaviour causes a problem you can't fix forward. It re
    - restores the 0001 shared policies and the 0005 header-based triggers
    - restores the original helper functions (`search_path = public`)
    - removes the bucket limits
-2. **Immediately go back to the previous app version:** Vercel → *Deployments* → the pre-0006 production deployment → **Instant Rollback** (or *Promote to Production*). Share pages fail between steps 1 and 2, exactly as during the deploy.
+2. **Immediately go back to the previous app version:** Vercel → *Deployments* → the pre-0006 production deployment → **Instant Rollback** (or `vercel rollback <deployment-url>`). Instant Rollback reassigns your domains to that existing build without a rebuild, so it takes seconds. A deployment that has already served production cannot be "promoted" again; it must be a rollback. Share pages fail between steps 1 and 2, exactly as during the deploy.
 3. Ask reviewers with an open share page to refresh.
 4. If you use the Supabase CLI migration history, mark 0006 as not applied: `supabase migration repair --status reverted 0006`.
 
@@ -199,3 +223,11 @@ Restoring the §1 backup is a last resort, because it also discards every change
 | `permission denied for function resolve_share` | Grants missing → re-run the "Function privileges" block at the end of the migration |
 | Reviewer sees "Too many responses…" | The link hit 60 submissions in 10 minutes or 300 in 24 hours. It clears on its own, or check the activity with the last spot-check query |
 | Upload fails with a size or type error | The file exceeds the bucket limits listed at the top of this document. This is intended |
+
+---
+
+## References (Vercel behaviour, checked Oct 2026)
+
+- [Promoting Deployments](https://vercel.com/docs/deployments/promoting-a-deployment): preview promotion = complete rebuild; staged production promotion = instant, no rebuild; Instant Rollback = domain reassignment, no rebuild.
+- [Promoting a preview deployment to production](https://vercel.com/docs/deployments/promote-preview-to-production): "triggers a complete rebuild with production environment variables".
+- [Deploying a staged production build (CLI)](https://vercel.com/docs/cli/deploying-from-cli#deploying-a-staged-production-build): `vercel --prod --skip-domain`, then `vercel promote`.
