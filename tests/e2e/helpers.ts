@@ -40,6 +40,24 @@ export async function enterDemoCalendar(page: Page, clientId = "client-aurelle")
   });
 }
 
+/**
+ * Step the calendar with its month arrows until it shows the given month
+ * (1-based), wherever it started — keeps tests independent of today's date.
+ */
+export async function gotoCalendarMonth(page: Page, year: number, month: number): Promise<void> {
+  const heading = page.getByRole("heading", { level: 2 });
+  const shown = new Date(`1 ${(await heading.textContent()) ?? ""}`);
+  expect(Number.isNaN(shown.getTime()), "calendar month heading is parseable").toBe(false);
+  const delta = (year - shown.getFullYear()) * 12 + (month - 1 - shown.getMonth());
+  const arrow = page.getByRole("button", { name: delta > 0 ? "Next month" : "Previous month" });
+  for (let i = 0; i < Math.abs(delta); i++) await arrow.click();
+  const target = new Date(year, month - 1, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+  await expect(heading).toHaveText(target);
+}
+
 /** Collect console errors + uncaught page errors for later assertions. */
 export function watchConsole(page: Page): { errors: string[] } {
   const errors: string[] = [];

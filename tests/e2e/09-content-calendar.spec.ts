@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import { enterDemo, enterDemoCalendar, evidence, paths, phone } from "./helpers";
+import { enterDemo, enterDemoCalendar, evidence, gotoCalendarMonth, paths, phone } from "./helpers";
 
 test.describe("Content page", () => {
   test("filters narrow results; combined filters and clear work", async ({ page }) => {
@@ -472,7 +472,7 @@ test.describe("Calendar workspace", () => {
     await expect(page.locator("body")).toContainText("Post updated");
 
     await enterDemoCalendar(page, "client-aurelle");
-    await page.getByRole("button", { name: "Next month" }).click(); // August 2026
+    await gotoCalendarMonth(page, 2026, 8);
     const day1 = dayCell(page).filter({ hasText: /^1(?!\d)/ }).first();
     await expect(day1.locator("button", { hasText: "Summer lookbook" })).toBeVisible();
   });
