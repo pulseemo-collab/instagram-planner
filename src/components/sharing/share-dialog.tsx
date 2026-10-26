@@ -7,7 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { TextField, ToggleField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/dates";
-import { useMutate } from "@/lib/store/hooks";
+import { useAction } from "@/lib/store/hooks";
 import type { ShareLink } from "@/types/domain";
 
 interface ShareDialogProps {
@@ -24,7 +24,7 @@ export function shareUrlFor(token: string): string {
 }
 
 export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }: ShareDialogProps) {
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
   async function createLink() {
     setBusy(true);
     try {
-      await mutate(async (repo) => {
+      const result = await run(async (repo) => {
         await repo.createShareLink({
           clientId,
           isActive: true,
@@ -51,7 +51,7 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
           description: `Preview link created for ${clientName}`,
         });
       });
-      toast("Share link created");
+      if (result.ok) toast("Share link created");
     } finally {
       setBusy(false);
     }
@@ -119,7 +119,7 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
                     <button
                       type="button"
                       onClick={() =>
-                        void mutate((repo) => repo.updateShareLink(link.id, { isActive: !link.isActive }))
+                        void run((repo) => repo.updateShareLink(link.id, { isActive: !link.isActive }))
                       }
                       className="font-medium text-ink-soft hover:text-ink"
                     >
@@ -128,8 +128,8 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
                     <button
                       type="button"
                       onClick={async () => {
-                        await mutate((repo) => repo.regenerateShareToken(link.id));
-                        toast("Token regenerated — old link no longer works");
+                        const result = await run((repo) => repo.regenerateShareToken(link.id));
+                        if (result.ok) toast("Token regenerated — old link no longer works");
                       }}
                       className="inline-flex items-center gap-1 font-medium text-ink-soft hover:text-ink"
                     >

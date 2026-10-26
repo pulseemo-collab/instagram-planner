@@ -7,7 +7,7 @@ import { Bell, BellOff, Check, CheckCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/dates";
 import { onWorkspaceChange } from "@/lib/repositories/demo-channel";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import type { AppNotification } from "@/types/domain";
 
@@ -18,7 +18,7 @@ import type { AppNotification } from "@/types/domain";
  */
 export function NotificationBell() {
   const { status, snapshot, mode } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
@@ -112,7 +112,8 @@ export function NotificationBell() {
   async function openNotification(notification: AppNotification) {
     setOpen(false);
     if (!notification.isRead) {
-      await mutate((repo) => repo.markNotificationRead(notification.id));
+      // A failed mark-read shows a toast but never blocks opening the post.
+      await run((repo) => repo.markNotificationRead(notification.id));
     }
     if (notification.postId) {
       router.push(`/clients/${notification.clientId}/posts/${notification.postId}?focus=review`);
@@ -161,7 +162,7 @@ export function NotificationBell() {
             {notifications.length > 0 && (
               <button
                 type="button"
-                onClick={() => void mutate((repo) => repo.markAllNotificationsRead())}
+                onClick={() => void run((repo) => repo.markAllNotificationsRead())}
                 disabled={unread === 0}
                 className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11.5px] font-medium text-ink-soft hover:text-ink disabled:opacity-40"
               >
@@ -228,7 +229,7 @@ export function NotificationBell() {
                       <button
                         type="button"
                         aria-label={`Mark "${notification.title}" as read`}
-                        onClick={() => void mutate((repo) => repo.markNotificationRead(notification.id))}
+                        onClick={() => void run((repo) => repo.markNotificationRead(notification.id))}
                         className="mt-2 flex size-7 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-panel-raised hover:text-ink"
                       >
                         <Check className="size-3.5" aria-hidden="true" />

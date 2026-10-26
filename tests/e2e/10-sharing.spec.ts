@@ -48,8 +48,10 @@ test.describe("Share links & public reviewer flow", () => {
     await page.goto("/share/demo-aurelle-h3ritage");
     await page.getByLabel("Name").fill("Rita Reviewer");
     await page.getByLabel("Email").fill("rita@example.com");
+    // Only the posts actually awaiting approval (Aurelle: 2 of them).
+    await expect(page.locator("body")).toContainText("2 posts are waiting for your approval");
     await page.getByRole("button", { name: "Approve all pending" }).click();
-    await expect(page.locator("body")).toContainText(/posts approved/);
+    await expect(page.locator("body")).toContainText("2 posts approved");
     await expect(page.getByRole("button", { name: "Approve all pending" })).toBeDisabled();
 
     // Creator side sees the result (same browser storage in demo mode): the
@@ -59,6 +61,12 @@ test.describe("Share links & public reviewer flow", () => {
     await expect(
       page.locator('section[aria-label="Edit post"]').getByLabel("Approval status"),
     ).toHaveValue("approved");
+
+    // A post never sent for review is left alone.
+    await enterDemo(page, "/clients/client-aurelle/posts/post-a4");
+    await expect(
+      page.locator('section[aria-label="Edit post"]').getByLabel("Approval status"),
+    ).toHaveValue("not_sent");
   });
 
   test("reviewer comments reach the creator's preview and activity feed", async ({ page }) => {

@@ -37,7 +37,7 @@ import {
   numericToDayKey,
 } from "@/lib/dates";
 import { coverMediaFor, parseMediaRef } from "@/lib/instagram/map-profile";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import type { Client, Post, PostMedia, PostType } from "@/types/domain";
 
 const typeIcons: Record<PostType, typeof ImageIcon> = {
@@ -222,7 +222,7 @@ type ContentFilter = "all" | "unscheduled" | "scheduled";
 export default function CalendarPage() {
   const { status, snapshot } = useWorkspace();
   const router = useRouter();
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
 
   const today = new Date();
@@ -350,13 +350,14 @@ export default function CalendarPage() {
 
   /* ---------------- scheduling actions ---------------- */
 
-  async function attachToDay(item: Post, dayKey: string) {
+  /** Place content / move a post to a day. Resolves true when it saved. */
+  async function attachToDay(item: Post, dayKey: string): Promise<boolean> {
     if (item.stage === "content") {
       // Content only gets a DAY. The publishing time is chosen when the
       // scheduler creates the actual post.
       const [y, m, d] = dayKey.split("-").map(Number);
       const iso = new Date(y, m - 1, d, 0, 0).toISOString();
-      await mutate(async (repo) => {
+      const placed = await run(async (repo) => {
         await repo.updatePost(item.id, { scheduledAt: iso });
         await repo.recordActivity({
           clientId: item.clientId,
@@ -364,8 +365,8 @@ export default function CalendarPage() {
           description: `Content “${item.name || "Untitled"}” placed on ${dayKeyToNumeric(dayKey)}`,
         });
       });
-      toast("Content placed — open it to create the post");
-      return;
+      if (placed.ok) toast("Content placed — open it to create the post");
+      return placed.ok;
     }
     const iso = item.scheduledAt
       ? moveIsoToDay(item.scheduledAt, dayKey)
@@ -373,7 +374,7 @@ export default function CalendarPage() {
           const [y, m, d] = dayKey.split("-").map(Number);
           return new Date(y, m - 1, d, 18, 0).toISOString();
         })();
-    await mutate(async (repo) => {
+    const moved = await run(async (repo) => {
       await repo.updatePost(item.id, { scheduledAt: iso, status: "scheduled" });
       await repo.recordActivity({
         clientId: item.clientId,
@@ -381,16 +382,18 @@ export default function CalendarPage() {
         description: `“${item.name || "Post"}” rescheduled`,
       });
     });
-    toast("Post rescheduled");
+    if (moved.ok) toast("Post rescheduled");
+    return moved.ok;
   }
 
   async function unscheduleItem(item: Post) {
-    await mutate((repo) =>
+    const result = await run((repo) =>
       repo.updatePost(item.id, {
         scheduledAt: null,
         status: item.stage === "content" || item.status !== "published" ? "draft" : item.status,
       }),
     );
+    if (!result.ok) return;
     toast(item.stage === "content" ? "Content returned to Unscheduled" : "Post returned to Unscheduled");
   }
 
@@ -651,8 +654,8 @@ export default function CalendarPage() {
           post={schedulingPost}
           onClose={() => setSchedulingPost(null)}
           onSave={async (dayKey) => {
-            await attachToDay(schedulingPost, dayKey);
-            setSchedulingPost(null);
+            // Keep the dialog open if the save failed (the error toast explains).
+            if (await attachToDay(schedulingPost, dayKey)) setSchedulingPost(null);
           }}
         />
       )}

@@ -10,7 +10,7 @@ import { TextField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { UploadDropzone } from "@/components/uploads/upload-dropzone";
 import { parseMediaRef } from "@/lib/instagram/map-profile";
-import { useMutate } from "@/lib/store/hooks";
+import { useAction, useMutate } from "@/lib/store/hooks";
 import type { Highlight } from "@/types/domain";
 
 interface HighlightsEditorProps {
@@ -28,6 +28,7 @@ interface HighlightDraft {
 
 export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps) {
   const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
   const sorted = [...highlights].sort((a, b) => a.position - b.position);
 
@@ -67,6 +68,8 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
       }
       setDraft(null);
       setDraftError(null);
+    } catch (e) {
+      setDraftError(e instanceof Error ? e.message : "Could not save the highlight");
     } finally {
       setBusy(false);
     }
@@ -77,19 +80,17 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
     if (target < 0 || target >= sorted.length) return;
     const ids = sorted.map((h) => h.id);
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    await mutate((repo) => repo.reorderHighlights(clientId, ids));
+    await run((repo) => repo.reorderHighlights(clientId, ids));
   }
 
   async function confirmDelete() {
     if (!deleting) return;
     setBusy(true);
-    try {
-      await mutate((repo) => repo.deleteHighlight(deleting.id));
-      toast("Highlight deleted");
-      setDeleting(null);
-    } finally {
-      setBusy(false);
-    }
+    const result = await run((repo) => repo.deleteHighlight(deleting.id));
+    setBusy(false);
+    if (!result.ok) return;
+    toast("Highlight deleted");
+    setDeleting(null);
   }
 
   return (

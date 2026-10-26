@@ -42,6 +42,11 @@ class WorkspaceStore {
     return this.loadPromise;
   }
 
+  /**
+   * Reload the snapshot. If a workspace was already loaded, a failed refresh
+   * keeps showing it (status stays "ready", `error` explains the stale data);
+   * only a workspace that never loaded ends in status "error".
+   */
   async refresh(initial = false): Promise<void> {
     if (initial) this.setState({ status: "loading", error: null });
     try {
@@ -50,10 +55,12 @@ class WorkspaceStore {
       await resolveMediaRefs(repo, snapshot);
       this.setState({ status: "ready", snapshot, mode: repo.mode, error: null });
     } catch (error) {
-      this.setState({
-        status: "error",
-        error: error instanceof Error ? error.message : "Failed to load workspace",
-      });
+      const message = error instanceof Error ? error.message : "Failed to load workspace";
+      this.setState(
+        this.state.snapshot && !initial
+          ? { status: "ready", error: message }
+          : { status: "error", error: message, snapshot: null },
+      );
     }
   }
 

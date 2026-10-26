@@ -529,11 +529,12 @@ export class SupabaseRepository implements Repository {
   }
 
   async reorderHighlights(clientId: string, orderedIds: string[]): Promise<void> {
-    await Promise.all(
-      orderedIds.map((id, index) =>
-        this.sb.from("highlights").update({ position: index }).eq("id", id).eq("client_id", clientId),
-      ),
-    );
+    // One UPDATE statement (migration 0007): the order changes all at once or not at all.
+    const { error } = await this.sb.rpc("reorder_highlights", {
+      p_client_id: clientId,
+      p_ordered_ids: orderedIds,
+    });
+    throwIf(error);
   }
 
   async deleteHighlight(id: string): Promise<void> {
@@ -564,7 +565,11 @@ export class SupabaseRepository implements Repository {
           position: index,
         })),
       );
-      throwIf(mediaError);
+      if (mediaError) {
+        // Don't leave a post without its media behind.
+        await this.sb.from("posts").delete().eq("id", post.id);
+        throw new Error(mediaError.message);
+      }
     }
     return post;
   }
@@ -585,28 +590,20 @@ export class SupabaseRepository implements Repository {
     media: Array<Omit<PostMedia, "id" | "postId" | "createdAt"> & { id?: string }>,
   ): Promise<PostMedia[]> {
     const previous = await this.postMediaUrls([postId]);
-    const { error: deleteError } = await this.sb.from("post_media").delete().eq("post_id", postId);
-    throwIf(deleteError);
-    if (!media.length) {
-      await this.removeUnreferencedMedia(previous);
-      return [];
-    }
-    const { data, error } = await this.sb
-      .from("post_media")
-      .insert(
-        media.map((m, index) => ({
-          post_id: postId,
-          media_type: m.mediaType,
-          url: m.url,
-          thumbnail_url: m.thumbnailUrl,
-          cover_source: m.coverSource ?? null,
-          cover_timestamp: m.coverTimestamp ?? null,
-          width: m.width,
-          height: m.height,
-          position: index,
-        })),
-      )
-      .select();
+    // Delete + insert in ONE transaction (migration 0007): a failure leaves
+    // the existing media untouched instead of a post with no media.
+    const { data, error } = await this.sb.rpc("set_post_media", {
+      p_post_id: postId,
+      p_media: media.map((m) => ({
+        media_type: m.mediaType,
+        url: m.url,
+        thumbnail_url: m.thumbnailUrl,
+        cover_source: m.coverSource ?? null,
+        cover_timestamp: m.coverTimestamp ?? null,
+        width: m.width,
+        height: m.height,
+      })),
+    });
     throwIf(error);
     // Files kept in the new list are still referenced and therefore stay.
     await this.removeUnreferencedMedia(previous);
@@ -614,11 +611,11 @@ export class SupabaseRepository implements Repository {
   }
 
   async reorderPosts(clientId: string, orderedIds: string[]): Promise<void> {
-    await Promise.all(
-      orderedIds.map((id, index) =>
-        this.sb.from("posts").update({ grid_position: index }).eq("id", id).eq("client_id", clientId),
-      ),
-    );
+    const { error } = await this.sb.rpc("reorder_posts", {
+      p_client_id: clientId,
+      p_ordered_ids: orderedIds,
+    });
+    throwIf(error);
   }
 
   async deletePost(id: string): Promise<void> {
@@ -672,7 +669,8 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
-    await this.sb.from("posts").update({ approval_status: input.status }).eq("id", input.postId);
+    // The approvals trigger (migration 0007) moves the post's approval_status
+    // in the same statement, so the two can't disagree.
     return mapApproval(data as Row);
   }
 

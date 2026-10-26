@@ -2,10 +2,72 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { X } from "lucide-react";
+import { CloudOff, RotateCw, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/cn";
+import { useWorkspace } from "@/lib/store/hooks";
+import { workspaceStore } from "@/lib/store/workspace-store";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
+
+/**
+ * Workspace load/refresh failures for every dashboard page in one place: a
+ * workspace that never loaded shows an error with Retry (instead of each
+ * page's skeleton spinning forever); a failed background refresh keeps the
+ * last loaded data visible with a notice.
+ */
+function WorkspaceGate({ children }: { children: ReactNode }) {
+  const { status, error, snapshot } = useWorkspace();
+  const [retrying, setRetrying] = useState(false);
+
+  async function retry() {
+    setRetrying(true);
+    await workspaceStore.refresh(!snapshot);
+    setRetrying(false);
+  }
+
+  if (status === "error" && !snapshot) {
+    return (
+      <EmptyState
+        icon={CloudOff}
+        title="Couldn't load your workspace"
+        description={`${error ?? "Something went wrong."} Check your connection and try again.`}
+        action={
+          <Button variant="primary" onClick={() => void retry()} disabled={retrying}>
+            <RotateCw className="size-3.5" aria-hidden="true" />
+            {retrying ? "Retrying…" : "Retry"}
+          </Button>
+        }
+      />
+    );
+  }
+
+  return (
+    <>
+      {error && snapshot && (
+        <div
+          role="status"
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-accent-soft px-3 py-2 text-[12.5px] text-accent-deep"
+        >
+          <CloudOff className="size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            Couldn&apos;t refresh your workspace — showing what was loaded earlier.
+          </span>
+          <button
+            type="button"
+            onClick={() => void retry()}
+            disabled={retrying}
+            className="font-medium underline-offset-2 hover:underline disabled:opacity-60"
+          >
+            {retrying ? "Retrying…" : "Retry"}
+          </button>
+        </div>
+      )}
+      {children}
+    </>
+  );
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -93,7 +155,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onOpenMobileNav={() => setMobileNavOpen(true)} />
         <main id="main-content" className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-          <div className="mx-auto w-full max-w-6xl">{children}</div>
+          <div className="mx-auto w-full max-w-6xl">
+            <WorkspaceGate>{children}</WorkspaceGate>
+          </div>
         </main>
       </div>
     </div>

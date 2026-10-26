@@ -58,16 +58,8 @@ export default function OverviewPage() {
   const { status, snapshot } = useWorkspace();
   const router = useRouter();
 
+  // Load failures are handled for every page by the app shell.
   if (status === "loading" || status === "idle" || !snapshot) return <PageSkeleton />;
-  if (status === "error") {
-    return (
-      <EmptyState
-        icon={Users}
-        title="Could not load your workspace"
-        description="Reload the page — if this keeps happening, check your connection settings."
-      />
-    );
-  }
 
   const stats = dashboardStats(snapshot);
   const recentClients = clientsSortedByUpdate(snapshot).slice(0, 4);

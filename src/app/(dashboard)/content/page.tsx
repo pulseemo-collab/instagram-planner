@@ -21,7 +21,7 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatRelative } from "@/lib/dates";
 import { coverMediaFor, parseMediaRef } from "@/lib/instagram/map-profile";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import {
   APPROVAL_STATUS_LABELS,
   POST_STATUS_LABELS,
@@ -37,7 +37,7 @@ type DateFilter = "all" | "scheduled_7" | "scheduled_30" | "unscheduled";
 
 export default function ContentPage() {
   const { status, snapshot } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
 
   const [view, setView] = useState<ViewMode>("grid");
@@ -105,29 +105,25 @@ export default function ContentPage() {
 
   async function bulkSetApproval(statusValue: ApprovalStatus) {
     setBusy(true);
-    try {
-      await mutate(async (repo) => {
-        for (const id of selected) await repo.updatePost(id, { approvalStatus: statusValue });
-      });
-      toast(`${selected.size} posts updated`);
-      setSelected(new Set());
-    } finally {
-      setBusy(false);
-    }
+    const result = await run(async (repo) => {
+      for (const id of selected) await repo.updatePost(id, { approvalStatus: statusValue });
+    });
+    setBusy(false);
+    if (!result.ok) return;
+    toast(`${selected.size} posts updated`);
+    setSelected(new Set());
   }
 
   async function bulkDelete() {
     setBusy(true);
-    try {
-      await mutate(async (repo) => {
-        for (const id of selected) await repo.deletePost(id);
-      });
-      toast(`${selected.size} posts deleted`);
-      setSelected(new Set());
-      setBulkDeleteOpen(false);
-    } finally {
-      setBusy(false);
-    }
+    const result = await run(async (repo) => {
+      for (const id of selected) await repo.deletePost(id);
+    });
+    setBusy(false);
+    if (!result.ok) return;
+    toast(`${selected.size} posts deleted`);
+    setSelected(new Set());
+    setBulkDeleteOpen(false);
   }
 
   const filterSelect =
@@ -403,7 +399,8 @@ export default function ContentPage() {
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (!deleting) return;
-          await mutate((repo) => repo.deletePost(deleting.id));
+          const result = await run((repo) => repo.deletePost(deleting.id));
+          if (!result.ok) return;
           toast("Post deleted");
           setDeleting(null);
         }}

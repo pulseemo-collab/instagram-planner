@@ -27,7 +27,7 @@ import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 import { buildIgProfile, sortForGrid } from "@/lib/instagram/map-profile";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import type { Client } from "@/types/domain";
 
 type PanelTab = "profile" | "highlights" | "posts";
@@ -37,7 +37,7 @@ export default function ClientWorkspacePage() {
   const params = useParams<{ clientId: string }>();
   const router = useRouter();
   const { status, snapshot } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
 
   const [mode, setMode] = useState<Mode>("edit");
@@ -89,18 +89,16 @@ export default function ClientWorkspacePage() {
   }
 
   async function handleReorder(orderedIds: string[]) {
-    await mutate((repo) => repo.reorderPosts(client!.id, orderedIds));
+    await run((repo) => repo.reorderPosts(client!.id, orderedIds));
   }
 
   async function handleDelete() {
     setDeleteBusy(true);
-    try {
-      await mutate((repo) => repo.deleteClient(client!.id));
-      toast(`${client!.name} deleted`);
-      router.push("/clients");
-    } finally {
-      setDeleteBusy(false);
-    }
+    const result = await run((repo) => repo.deleteClient(client!.id));
+    setDeleteBusy(false);
+    if (!result.ok) return;
+    toast(`${client!.name} deleted`);
+    router.push("/clients");
   }
 
   const orderedPosts = sortForGrid(bundle.posts);
@@ -168,9 +166,10 @@ export default function ClientWorkspacePage() {
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={async () => {
                     setMenuOpen(false);
-                    const copy = await mutate((repo) => repo.duplicateClient(client.id));
-                    toast(`Duplicated as ${copy.name}`);
-                    router.push(`/clients/${copy.id}`);
+                    const copy = await run((repo) => repo.duplicateClient(client.id));
+                    if (!copy.ok) return;
+                    toast(`Duplicated as ${copy.value.name}`);
+                    router.push(`/clients/${copy.value.id}`);
                   }}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas"
                 >

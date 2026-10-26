@@ -11,12 +11,12 @@ import { useToast } from "@/components/ui/toast";
 import { authMode, endDemoSession } from "@/lib/auth/session";
 import { getRepository } from "@/lib/repositories";
 import { workspaceStore } from "@/lib/store/workspace-store";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import { getPreferences, setPreferences, type AppPreferences } from "@/lib/preferences";
 
 export default function SettingsPage() {
   const { status, snapshot, mode } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const router = useRouter();
   const { toast } = useToast();
 
@@ -43,12 +43,11 @@ export default function SettingsPage() {
 
   async function saveProfile() {
     setBusy(true);
-    try {
-      await mutate((repo) => repo.updateUser({ displayName: displayName.trim() || "Studio owner" }));
-      toast("Profile saved");
-    } finally {
-      setBusy(false);
-    }
+    const result = await run((repo) =>
+      repo.updateUser({ displayName: displayName.trim() || "Studio owner" }),
+    );
+    setBusy(false);
+    if (result.ok) toast("Profile saved");
   }
 
   async function signOut() {
@@ -72,6 +71,8 @@ export default function SettingsPage() {
       toast(seed ? "Demo data restored" : "All data cleared");
       setResetOpen(false);
       setClearOpen(false);
+    } catch {
+      toast("Couldn't reset the demo data. Please try again.", "error");
     } finally {
       setBusy(false);
     }

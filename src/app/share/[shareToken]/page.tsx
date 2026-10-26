@@ -73,6 +73,11 @@ async function loadShare(token: string): Promise<ShareResolution | ShareError> {
   return result;
 }
 
+/** Completed posts the owner has sent for review and nobody has answered yet. */
+function pendingPosts(bundle: ClientBundle) {
+  return bundle.posts.filter((p) => p.stage === "post" && p.approvalStatus === "awaiting_approval");
+}
+
 function validateReviewer(reviewer: Reviewer): string | null {
   if (!reviewer.name.trim() || reviewer.name.trim().length < 2) return "Please enter your name.";
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reviewer.email)) return "Please enter a valid email.";
@@ -84,6 +89,7 @@ function SharePageInner() {
   const { toast } = useToast();
 
   const [resolution, setResolution] = useState<ShareResolution | ShareError | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [reviewer, setReviewer] = useState<Reviewer>(() =>
     typeof window === "undefined" ? { name: "", email: "" } : loadReviewer(),
@@ -109,8 +115,12 @@ function SharePageInner() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const result = await loadShare(params.shareToken);
-      if (!cancelled) setResolution(result);
+      try {
+        const result = await loadShare(params.shareToken);
+        if (!cancelled) setResolution(result);
+      } catch {
+        if (!cancelled) setLoadFailed(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -135,6 +145,17 @@ function SharePageInner() {
       bundle.comments.filter((c) => c.postId === openPost.id),
     );
   }, [bundle, openPost]);
+
+  if (loadFailed) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+        <h1 className="text-lg font-semibold tracking-tight text-ink">Couldn&apos;t load this preview</h1>
+        <p className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">
+          Check your connection and refresh the page to try again.
+        </p>
+      </div>
+    );
+  }
 
   if (resolution === null) {
     return (
@@ -245,9 +266,8 @@ function SharePageInner() {
   async function approveAllPending() {
     if (busyRef.current) return;
     if (!persistReviewer()) return;
-    const pending = bundle!.posts.filter(
-      (p) => p.approvalStatus === "awaiting_approval" || p.approvalStatus === "not_sent",
-    );
+    // Exactly the posts counted as "waiting for your approval" below.
+    const pending = pendingPosts(bundle!);
     if (pending.length === 0) {
       toast("Nothing waiting for approval", "info");
       return;
@@ -292,7 +312,7 @@ function SharePageInner() {
     }
   }
 
-  const pendingCount = bundle!.posts.filter((p) => p.approvalStatus === "awaiting_approval").length;
+  const pendingCount = pendingPosts(bundle!).length;
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 py-6 sm:px-6">
