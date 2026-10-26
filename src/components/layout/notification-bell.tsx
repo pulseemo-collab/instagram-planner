@@ -6,6 +6,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Bell, BellOff, Check, CheckCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/dates";
+import { onWorkspaceChange } from "@/lib/repositories/demo-channel";
 import { useMutate, useWorkspace } from "@/lib/store/hooks";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import type { AppNotification } from "@/types/domain";
@@ -45,7 +46,7 @@ export function NotificationBell() {
 
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
-    let broadcast: BroadcastChannel | null = null;
+    let stopDemoListener: (() => void) | null = null;
 
     if (mode === "supabase") {
       void (async () => {
@@ -66,14 +67,9 @@ export function NotificationBell() {
           .subscribe();
       })();
     } else {
-      // Demo mode: other tabs announce persisted changes on this channel (the
-      // repository also listens and drops its in-memory cache first).
-      try {
-        broadcast = new BroadcastChannel("gridline-workspace");
-        broadcast.onmessage = () => void workspaceStore.refresh();
-      } catch {
-        broadcast = null;
-      }
+      // Demo mode: other tabs announce persisted changes (the repository
+      // listens too and drops its cache before this refresh runs).
+      stopDemoListener = onWorkspaceChange(() => void workspaceStore.refresh());
     }
 
     // Fallback for both modes: re-fetch when the window regains focus.
@@ -83,7 +79,7 @@ export function NotificationBell() {
     return () => {
       cancelled = true;
       if (channel) void channel.unsubscribe();
-      broadcast?.close();
+      stopDemoListener?.();
       window.removeEventListener("focus", onFocus);
     };
   }, [mode, userId]);

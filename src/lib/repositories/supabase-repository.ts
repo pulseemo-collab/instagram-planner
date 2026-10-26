@@ -233,6 +233,8 @@ function throwIf(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
 }
 
+const MEDIA_BUCKETS = ["avatars", "highlights", "post-media"] as const;
+
 /** Error codes raised by the 0006 share RPCs, mapped to repository errors. */
 const SHARE_RPC_ERRORS: Record<string, ShareError> = {
   not_found: "not_found",
@@ -261,6 +263,67 @@ export class SupabaseRepository implements Repository {
 
   private get sb(): SupabaseClient {
     return getBrowserSupabase();
+  }
+
+  /* -------------------------- storage cleanup --------------------------- */
+
+  /** Bucket + object path of one of this project's public Storage URLs. */
+  private storageObject(url: string | null | undefined): { bucket: string; path: string } | null {
+    const base = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/`;
+    if (!url || !url.startsWith(base)) return null;
+    const rest = url.slice(base.length);
+    const slash = rest.indexOf("/");
+    const bucket = rest.slice(0, slash);
+    if (slash < 0 || !(MEDIA_BUCKETS as readonly string[]).includes(bucket)) return null;
+    return { bucket, path: decodeURIComponent(rest.slice(slash + 1)) };
+  }
+
+  /**
+   * Best-effort removal of Storage files that no row references any more
+   * (after a delete, or a replaced avatar / cover / media list). Runs only
+   * after the database change succeeded; a failure here never fails the
+   * operation, and nothing is removed if the reference check itself fails.
+   * Files shared between rows (e.g. a duplicated client) stay until the last
+   * reference is gone.
+   */
+  private async removeUnreferencedMedia(candidates: Array<string | null | undefined>): Promise<void> {
+    const urls = [...new Set(candidates)].filter(
+      (url): url is string => this.storageObject(url) !== null,
+    );
+    try {
+      for (let start = 0; start < urls.length; start += 40) {
+        const chunk = urls.slice(start, start + 40);
+        const checks = await Promise.all([
+          this.sb.from("profiles").select("url:avatar_url").in("avatar_url", chunk),
+          this.sb.from("clients").select("url:avatar_url").in("avatar_url", chunk),
+          this.sb.from("highlights").select("url:cover_url").in("cover_url", chunk),
+          this.sb.from("post_media").select("url").in("url", chunk),
+          this.sb.from("post_media").select("url:thumbnail_url").in("thumbnail_url", chunk),
+        ]);
+        if (checks.some((check) => check.error)) return;
+        const stillUsed = new Set(
+          checks.flatMap((check) => ((check.data ?? []) as Row[]).map((row) => String(row.url))),
+        );
+        const byBucket = new Map<string, string[]>();
+        for (const url of chunk) {
+          if (stillUsed.has(url)) continue;
+          const object = this.storageObject(url)!;
+          byBucket.set(object.bucket, [...(byBucket.get(object.bucket) ?? []), object.path]);
+        }
+        await Promise.all(
+          [...byBucket].map(([bucket, paths]) => this.sb.storage.from(bucket).remove(paths)),
+        );
+      }
+    } catch {
+      // Orphaned files only cost storage; never fail the user's action.
+    }
+  }
+
+  /** Current media URLs of the given posts (cleanup candidates). */
+  private async postMediaUrls(postIds: string[]): Promise<string[]> {
+    if (!postIds.length) return [];
+    const { data } = await this.sb.from("post_media").select("url, thumbnail_url").in("post_id", postIds);
+    return ((data ?? []) as Row[]).flatMap((row) => [asStr(row.url), asStrOrNull(row.thumbnail_url) ?? ""]);
   }
 
   async loadSnapshot(): Promise<WorkspaceSnapshot> {
@@ -325,6 +388,10 @@ export class SupabaseRepository implements Repository {
     const row: Row = {};
     if (patch.displayName !== undefined) row.display_name = patch.displayName;
     if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
+    const previous =
+      patch.avatarUrl !== undefined
+        ? (await this.sb.from("profiles").select("avatar_url").eq("id", auth.user.id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("profiles")
       .update(row)
@@ -332,6 +399,7 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.avatar_url)]);
     return mapUser(data as Row);
   }
 
@@ -348,6 +416,10 @@ export class SupabaseRepository implements Repository {
   }
 
   async updateClient(id: string, patch: Partial<Client>): Promise<Client> {
+    const previous =
+      patch.avatarUrl !== undefined
+        ? (await this.sb.from("clients").select("avatar_url").eq("id", id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("clients")
       .update(clientToRow(patch))
@@ -355,6 +427,7 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.avatar_url)]);
     return mapClient(data as Row);
   }
 
@@ -389,8 +462,20 @@ export class SupabaseRepository implements Repository {
   }
 
   async deleteClient(id: string): Promise<void> {
+    // Collect the client's files first; rows cascade away with the delete.
+    const [client, highlights, posts] = await Promise.all([
+      this.sb.from("clients").select("avatar_url").eq("id", id).maybeSingle(),
+      this.sb.from("highlights").select("cover_url").eq("client_id", id),
+      this.sb.from("posts").select("id").eq("client_id", id),
+    ]);
+    const candidates = [
+      asStrOrNull((client.data as Row | null)?.avatar_url),
+      ...((highlights.data ?? []) as Row[]).map((row) => asStrOrNull(row.cover_url)),
+      ...(await this.postMediaUrls(((posts.data ?? []) as Row[]).map((row) => asStr(row.id)))),
+    ];
     const { error } = await this.sb.from("clients").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia(candidates);
   }
 
   async createHighlight(
@@ -415,6 +500,10 @@ export class SupabaseRepository implements Repository {
     if (patch.title !== undefined) row.title = patch.title;
     if (patch.coverUrl !== undefined) row.cover_url = patch.coverUrl;
     if (patch.position !== undefined) row.position = patch.position;
+    const previous =
+      patch.coverUrl !== undefined
+        ? (await this.sb.from("highlights").select("cover_url").eq("id", id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("highlights")
       .update(row)
@@ -422,6 +511,7 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.cover_url)]);
     return mapHighlight(data as Row);
   }
 
@@ -434,8 +524,10 @@ export class SupabaseRepository implements Repository {
   }
 
   async deleteHighlight(id: string): Promise<void> {
+    const previous = (await this.sb.from("highlights").select("cover_url").eq("id", id).maybeSingle()).data;
     const { error } = await this.sb.from("highlights").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.cover_url)]);
   }
 
   async createPost(
@@ -479,9 +571,13 @@ export class SupabaseRepository implements Repository {
     postId: string,
     media: Array<Omit<PostMedia, "id" | "postId" | "createdAt"> & { id?: string }>,
   ): Promise<PostMedia[]> {
+    const previous = await this.postMediaUrls([postId]);
     const { error: deleteError } = await this.sb.from("post_media").delete().eq("post_id", postId);
     throwIf(deleteError);
-    if (!media.length) return [];
+    if (!media.length) {
+      await this.removeUnreferencedMedia(previous);
+      return [];
+    }
     const { data, error } = await this.sb
       .from("post_media")
       .insert(
@@ -499,6 +595,8 @@ export class SupabaseRepository implements Repository {
       )
       .select();
     throwIf(error);
+    // Files kept in the new list are still referenced and therefore stay.
+    await this.removeUnreferencedMedia(previous);
     return ((data ?? []) as Row[]).map(mapMedia);
   }
 
@@ -511,8 +609,10 @@ export class SupabaseRepository implements Repository {
   }
 
   async deletePost(id: string): Promise<void> {
+    const previous = await this.postMediaUrls([id]);
     const { error } = await this.sb.from("posts").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia(previous);
   }
 
   async createComment(input: Omit<Comment, "id" | "createdAt">): Promise<Comment> {

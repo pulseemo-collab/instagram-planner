@@ -10,6 +10,7 @@ import { TextAreaField, TextField } from "@/components/ui/field";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
 import { buildIgProfile } from "@/lib/instagram/map-profile";
+import { resolveMediaRefs } from "@/lib/media/resolve-media";
 import { getRepository, isShareError } from "@/lib/repositories";
 import type { ShareError, ShareResolution } from "@/lib/repositories/types";
 import { APPROVAL_STATUS_LABELS, type ClientBundle } from "@/types/domain";
@@ -57,6 +58,21 @@ function postsLabel(count: number): string {
   return `${count} ${count === 1 ? "post" : "posts"}`;
 }
 
+/** Resolve the token and make its media displayable (demo `local:` refs). */
+async function loadShare(token: string): Promise<ShareResolution | ShareError> {
+  const repo = await getRepository();
+  const result = await repo.resolveShareToken(token);
+  if (!isShareError(result)) {
+    const { bundle } = result;
+    await resolveMediaRefs(repo, {
+      clients: [bundle.client],
+      highlights: bundle.highlights,
+      media: bundle.media,
+    });
+  }
+  return result;
+}
+
 function validateReviewer(reviewer: Reviewer): string | null {
   if (!reviewer.name.trim() || reviewer.name.trim().length < 2) return "Please enter your name.";
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reviewer.email)) return "Please enter a valid email.";
@@ -93,26 +109,8 @@ function SharePageInner() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const repo = await getRepository();
-      const result = await repo.resolveShareToken(params.shareToken);
-      if (cancelled) return;
-      if (!isShareError(result)) {
-        // Resolve demo-mode local: media references for display.
-        const bundle = result.bundle;
-        const resolve = async (url: string | null) =>
-          url && url.startsWith("local:") ? repo.resolveMediaUrl(url) : url;
-        bundle.client.avatarUrl = await resolve(bundle.client.avatarUrl);
-        await Promise.all([
-          ...bundle.highlights.map(async (h) => {
-            h.coverUrl = await resolve(h.coverUrl);
-          }),
-          ...bundle.media.map(async (m) => {
-            m.url = (await resolve(m.url)) ?? m.url;
-            m.thumbnailUrl = await resolve(m.thumbnailUrl);
-          }),
-        ]);
-      }
-      setResolution(result);
+      const result = await loadShare(params.shareToken);
+      if (!cancelled) setResolution(result);
     })();
     return () => {
       cancelled = true;
@@ -171,8 +169,7 @@ function SharePageInner() {
   }
 
   async function refreshBundle() {
-    const repo = await getRepository();
-    const result = await repo.resolveShareToken(params.shareToken);
+    const result = await loadShare(params.shareToken);
     if (!isShareError(result)) setResolution(result);
   }
 

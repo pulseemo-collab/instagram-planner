@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveMediaRefs } from "@/lib/media/resolve-media";
 import { getRepository } from "@/lib/repositories";
 import type { Repository, WorkspaceSnapshot } from "@/lib/repositories/types";
 
@@ -46,7 +47,7 @@ class WorkspaceStore {
     try {
       const repo = await getRepository();
       const snapshot = await repo.loadSnapshot();
-      await resolveLocalMedia(repo, snapshot);
+      await resolveMediaRefs(repo, snapshot);
       this.setState({ status: "ready", snapshot, mode: repo.mode, error: null });
     } catch (error) {
       this.setState({
@@ -68,31 +69,6 @@ class WorkspaceStore {
     this.loadPromise = null;
     this.state = { status: "idle", error: null, mode: this.state.mode, snapshot: null };
   }
-}
-
-/**
- * Replace demo-mode `local:` references with displayable data URLs so UI
- * components never need to resolve media themselves.
- */
-async function resolveLocalMedia(
-  repo: Repository,
-  snapshot: WorkspaceSnapshot,
-): Promise<void> {
-  const resolve = async (url: string | null): Promise<string | null> =>
-    url && url.startsWith("local:") ? repo.resolveMediaUrl(url) : url;
-
-  await Promise.all([
-    ...snapshot.clients.map(async (client) => {
-      client.avatarUrl = await resolve(client.avatarUrl);
-    }),
-    ...snapshot.highlights.map(async (highlight) => {
-      highlight.coverUrl = await resolve(highlight.coverUrl);
-    }),
-    ...snapshot.media.map(async (media) => {
-      media.url = (await resolve(media.url)) ?? media.url;
-      media.thumbnailUrl = await resolve(media.thumbnailUrl);
-    }),
-  ]);
 }
 
 export const workspaceStore = new WorkspaceStore();
