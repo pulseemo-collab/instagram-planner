@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main, audit-fixes]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  checks:
+    name: Lint, types, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+
+  sql:
+    name: SQL / RLS tests (throwaway PostgreSQL 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install PostgreSQL 17 (PGDG)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm run test:sql
+        env:
+          PG_BIN: /usr/lib/postgresql/17/bin
+
+  build:
+    name: Production build (demo mode)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Demo jobs must never build in live mode.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  e2e-demo:
+    name: Playwright (demo mode)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Demo jobs must never build in live mode.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The Playwright config builds and serves the app itself.
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-demo-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  live:
+    name: Live mode (local Supabase via supabase start)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Starts a LOCAL stack in Docker and applies supabase/migrations/*.sql
+      # (0001–0009) through the real Supabase CLI. No hosted project, no
+      # secrets: the keys below are the local stack's public demo keys.
+      - name: Start local Supabase
+        run: supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor,postgres-meta
+
+      - name: Export local stack settings
+        run: |
+          eval "$(supabase status -o env)"
+          ANON="${ANON_KEY:-$PUBLISHABLE_KEY}"
+          SERVICE="${SERVICE_ROLE_KEY:-$SECRET_KEY}"
+          case "$API_URL" in
+            http://127.0.0.1:*|http://localhost:*) ;;
+            *) echo "Refusing: API_URL is not local ($API_URL)"; exit 1 ;;
+          esac
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE"
+            echo "SUPABASE_DB_URL=$DB_URL"
+            echo "SUPABASE_MAIL_URL=${INBUCKET_URL:-${MAILPIT_URL:-http://127.0.0.1:54324}}"
+          } >> "$GITHUB_ENV"
+
+      # The same verify scripts as for production, against real Supabase
+      # (proves the plain-PostgreSQL stand-ins in the sql job are faithful).
+      - name: Verify migrations on the real Supabase schema
+        run: |
+          for file in supabase/verify/*_verify.sql; do
+            echo "== $file"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$file" | tee /tmp/verify.out
+            grep -q "CHECKS PASSED" /tmp/verify.out
+          done
+
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:live
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-live-report
+          path: |
+            playwright-report/live/
+            test-results/live/
+          retention-days: 7
+
+      - if: always()
+        run: supabase stop --no-backup

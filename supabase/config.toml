@@ -1,0 +1,55 @@
+# Local Supabase stack for the CI "live" job (`supabase start`, GitHub
+# Actions only — needs Docker). This file configures the LOCAL stack; it is
+# not linked to any hosted project and contains no keys. `supabase start`
+# applies supabase/migrations/*.sql in order on a fresh database.
+
+project_id = "gridline-studio-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = false
+
+# Local mail catcher: the live tests read signup confirmation emails here.
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000", "http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# On, so the "Check your inbox" signup path is exercised end to end.
+enable_confirmations = true
+double_confirm_changes = true
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
