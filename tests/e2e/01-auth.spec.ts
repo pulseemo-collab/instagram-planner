@@ -49,6 +49,25 @@ test.describe("Authentication & demo mode", () => {
     expect(significantErrors(console.errors)).toEqual([]);
   });
 
+  test("?next= only redirects within the app (no open redirect)", async ({ page }) => {
+    // Never actually leave the test server, even if a redirect slipped through.
+    await page.route((url) => url.hostname.endsWith("evil.example"), (route) => route.abort());
+    for (const next of ["https://evil.example/", "//evil.example/", "/\\evil.example/", "javascript:alert(1)"]) {
+      await page.goto(`/login?next=${encodeURIComponent(next)}`);
+      const appOrigin = new URL(page.url()).origin;
+      await page.getByRole("button", { name: "Continue in demo mode" }).click();
+      // Lands on this app's dashboard ("Welcome back, <name>"; the login page's
+      // own heading is a bare "Welcome back").
+      await expect(page, `next=${next}`).toHaveURL(`${appOrigin}/`);
+      await expect(page.getByRole("heading", { name: /Welcome back,/ })).toBeVisible();
+    }
+
+    // A same-site path is still honoured.
+    await page.goto(`/login?next=${encodeURIComponent("/settings")}`);
+    await page.getByRole("button", { name: "Continue in demo mode" }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+  });
+
   test("sign out returns to login and re-protects routes", async ({ page }) => {
     // Enter demo via the real button (an init script would re-seed the session
     // flag on every navigation and mask the sign-out behavior).

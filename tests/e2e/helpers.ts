@@ -2,9 +2,17 @@ import { expect, type ConsoleMessage, type Page } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
 
-export const EVIDENCE_DIR = path.join(process.cwd(), "docs", "qa-evidence");
+/**
+ * Where evidence screenshots and the axe report go. By default a normal test
+ * run writes them under test-results/ (git-ignored), so it never rewrites the
+ * committed copies; run with UPDATE_QA_EVIDENCE=1 to refresh docs/qa-evidence/.
+ */
+export const EVIDENCE_DIR =
+  process.env.UPDATE_QA_EVIDENCE === "1"
+    ? path.join(process.cwd(), "docs", "qa-evidence")
+    : path.join(process.cwd(), "test-results", "qa-evidence");
 
-/** Save an evidence screenshot under docs/qa-evidence/<folder>/<name>.png */
+/** Save an evidence screenshot under <EVIDENCE_DIR>/<folder>/<name>.png */
 export async function evidence(page: Page, folder: string, name: string): Promise<void> {
   const dir = path.join(EVIDENCE_DIR, folder);
   fs.mkdirSync(dir, { recursive: true });

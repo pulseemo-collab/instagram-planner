@@ -6,6 +6,9 @@ test.describe("Content page", () => {
   test("filters narrow results; combined filters and clear work", async ({ page }) => {
     await enterDemo(page, "/content");
     const cards = page.locator("ul li", { has: page.locator('a[href*="/posts/"]') });
+    // Wait for the library to render before counting (the page shows a
+    // skeleton while the workspace loads).
+    await expect(cards.first()).toBeVisible();
     const total = await cards.count();
     expect(total).toBeGreaterThan(10);
 

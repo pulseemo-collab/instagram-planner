@@ -45,9 +45,13 @@ npx playwright show-trace test-results/<test-folder>/trace.zip
 ```
 
 - Failure screenshots and traces: `test-results/` (retained on failure only).
-- Curated evidence screenshots written by the tests themselves:
-  `docs/qa-evidence/<area>/<name>.png`.
-- Accessibility scan output: `docs/qa-evidence/axe-results.json`.
+- Evidence screenshots written by the tests themselves (`<area>/<name>.png`) and
+  the accessibility scan output (`axe-results.json`) go to
+  `test-results/qa-evidence/` on a normal run, which is git-ignored, so running the
+  suite never changes committed files.
+- To refresh the **committed** evidence in `docs/qa-evidence/`, run the suite with
+  `UPDATE_QA_EVIDENCE=1` (PowerShell: `$env:UPDATE_QA_EVIDENCE = "1"; npx playwright test`),
+  then review and commit the changed images.
 
 ## How test data works
 

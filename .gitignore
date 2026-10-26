@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# Playwright output (regenerated on every run)
+/playwright-report/
+/test-results/
+/playwright-*.log
+/tests/e2e/*.log
+
 # next.js
 /.next/
 /out/
@@ -30,8 +36,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — real values stay local; the blank template is committed
 .env*
+!.env.example
 
 # vercel
 .vercel

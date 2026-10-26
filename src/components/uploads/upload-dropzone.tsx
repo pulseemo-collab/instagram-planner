@@ -241,7 +241,7 @@ export function UploadDropzone({
 
   const formatsLine = (
     <p className="text-[11.5px] text-ink-faint">
-      JPG, PNG, WEBP{allowVideo ? " · MP4/WebM for reels" : ""}
+      JPG, PNG, WEBP{allowVideo ? " · MP4/WebM/MOV for reels" : ""}
     </p>
   );
 
