@@ -270,7 +270,10 @@ begin
   if (select count(*) from public.profiles where status = 'pending' and id::text like '00100000-%') <> 3 then
     raise exception 'FAIL 8: owner should see the 3 pending fixture accounts';
   end if;
-  if (select count(*) from public.notifications where type = 'member_signup' and subject_user_id::text like '00100000-%') <> 5 then
+  -- Counted for the still-pending accounts only: from 0011 on, the notices
+  -- of approved accounts are resolved (deleted) automatically.
+  if (select count(*) from public.notifications n join public.profiles p on p.id = n.subject_user_id
+      where n.type = 'member_signup' and p.status = 'pending' and p.id::text like '00100000-%') <> 3 then
     raise exception 'FAIL 8: owner should see the sign-up notifications';
   end if;
   perform public.approve_member('00100000-0000-4000-8000-0000000000a2');
