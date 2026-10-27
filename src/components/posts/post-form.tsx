@@ -167,6 +167,12 @@ export function PostForm({
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Files still uploading (media, reel cover, video cover). Saving waits for
+  // them — otherwise a quick click saves without the file.
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [reelCoverUploading, setReelCoverUploading] = useState(false);
+  const [videoCoverBusy, setVideoCoverBusy] = useState(false);
+  const uploading = mediaUploading || reelCoverUploading || videoCoverBusy;
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
 
   const pinnedCount = useMemo(
@@ -225,6 +231,7 @@ export function PostForm({
   }
 
   async function save() {
+    if (uploading) return;
     setError(null);
     if (!name.trim()) {
       setError("Give the post a name (e.g. “Post 1”).");
@@ -465,6 +472,7 @@ export function PostForm({
           allowVideo={type === "reel"}
           multiple={type !== "reel"}
           onUploaded={addUploads}
+          onBusyChange={setMediaUploading}
         />
       </div>
 
@@ -478,6 +486,7 @@ export function PostForm({
           coverSource={primary.coverSource ?? (primary.thumbnailUrl ? "uploaded" : null)}
           coverTimestamp={primary.coverTimestamp ?? null}
           onCoverSelected={applyCover}
+          onBusyChange={setVideoCoverBusy}
         />
       )}
 
@@ -494,6 +503,7 @@ export function PostForm({
               bucket="post-media"
               multiple={false}
               label="Upload cover image"
+              onBusyChange={setReelCoverUploading}
               onUploaded={(items) => {
                 const item = items[0];
                 if (item) {
@@ -603,10 +613,12 @@ export function PostForm({
             Cancel
           </Button>
         )}
-        <Button variant="primary" onClick={() => void save()} disabled={busy}>
+        <Button variant="primary" onClick={() => void save()} disabled={busy || uploading}>
           {busy
             ? "Saving…"
-            : conversion
+            : uploading
+              ? "Uploading…"
+              : conversion
               ? "Create post"
               : variant === "inline"
                 ? "Save changes"

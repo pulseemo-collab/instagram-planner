@@ -59,7 +59,9 @@ test.describe("Owner workflow + Storage cleanup", () => {
     await page.getByRole("button", { name: "New post" }).click();
     const dialog = page.getByRole("dialog", { name: "New post" });
     await dialog.locator('input[type="file"]').first().setInputFiles(paths.asset("photo-1.png"));
-    await expect(dialog.locator("li").filter({ hasText: "1" }).first()).toBeVisible();
+    // Upload finished: the file is a slide in the post, and saving is enabled.
+    await expect(dialog.getByRole("button", { name: "Remove slide 1" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Create post" })).toBeEnabled();
     await dialog.getByLabel("Post name").fill("Live photo");
     await dialog.getByRole("button", { name: "Create post" }).click();
     await expect(page.locator("body")).toContainText("Post created");

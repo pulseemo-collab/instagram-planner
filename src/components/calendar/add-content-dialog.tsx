@@ -45,6 +45,8 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
   const [media, setMedia] = useState<ContentMediaDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // True while a file is still uploading — saving waits for it.
+  const [uploading, setUploading] = useState(false);
 
   function addUploads(items: UploadedItem[]) {
     setMedia((current) => [
@@ -60,6 +62,7 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
   }
 
   async function save() {
+    if (uploading) return;
     setError(null);
     if (!name.trim()) {
       setError("Give the content a name (e.g. “Post 1”).");
@@ -167,7 +170,14 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
               })}
             </ul>
           )}
-          <UploadDropzone bucket="post-media" allowVideo multiple allowFolders onUploaded={addUploads} />
+          <UploadDropzone
+            bucket="post-media"
+            allowVideo
+            multiple
+            allowFolders
+            onUploaded={addUploads}
+            onBusyChange={setUploading}
+          />
         </div>
 
         {error && (
@@ -180,8 +190,8 @@ function AddContentDialogInner({ onClose, clientId, existingCount }: AddContentD
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => void save()} disabled={busy}>
-            {busy ? "Adding…" : "Add content"}
+          <Button variant="primary" onClick={() => void save()} disabled={busy || uploading}>
+            {busy ? "Adding…" : uploading ? "Uploading…" : "Add content"}
           </Button>
         </div>
       </div>

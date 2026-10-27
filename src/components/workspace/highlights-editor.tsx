@@ -35,10 +35,12 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
   const [draft, setDraft] = useState<HighlightDraft | null>(null);
   const [deleting, setDeleting] = useState<Highlight | null>(null);
   const [busy, setBusy] = useState(false);
+  // True while a file is still uploading — saving waits for it.
+  const [uploading, setUploading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
   async function saveDraft() {
-    if (!draft) return;
+    if (!draft || uploading) return;
     if (!draft.title.trim()) {
       setDraftError("Title is required");
       return;
@@ -205,6 +207,7 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
                   bucket="highlights"
                   multiple={false}
                   label="Upload cover"
+                  onBusyChange={setUploading}
                   onUploaded={(items) =>
                     items[0] &&
                     setDraft({ ...draft, coverUrl: items[0].url, coverPreviewUrl: items[0].previewUrl })
@@ -217,8 +220,8 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
               <Button onClick={() => setDraft(null)} disabled={busy}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={() => void saveDraft()} disabled={busy}>
-                {busy ? "Saving…" : "Save highlight"}
+              <Button variant="primary" onClick={() => void saveDraft()} disabled={busy || uploading}>
+                {busy ? "Saving…" : uploading ? "Uploading…" : "Save highlight"}
               </Button>
             </div>
           </div>

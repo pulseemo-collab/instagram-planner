@@ -27,6 +27,8 @@ export function ProfileEditor({ client, onDraftChange }: ProfileEditorProps) {
   const [baseline, setBaseline] = useState<Client>(client);
   const [draft, setDraft] = useState<Client>(client);
   const [busy, setBusy] = useState(false);
+  // True while a file is still uploading — saving waits for it.
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
 
@@ -41,6 +43,7 @@ export function ProfileEditor({ client, onDraftChange }: ProfileEditorProps) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
 
   async function save() {
+    if (uploading) return;
     setBusy(true);
     setError(null);
     try {
@@ -86,6 +89,7 @@ export function ProfileEditor({ client, onDraftChange }: ProfileEditorProps) {
             bucket="avatars"
             multiple={false}
             label="Upload new picture"
+            onBusyChange={setUploading}
             onUploaded={(items) => {
               if (items[0]) {
                 patch({ avatarUrl: items[0].url });
@@ -212,8 +216,8 @@ export function ProfileEditor({ client, onDraftChange }: ProfileEditorProps) {
 
       <div className="sticky bottom-0 -mx-1 flex items-center justify-between gap-2 border-t border-line bg-panel px-1 pb-1 pt-3">
         <span className="text-[12px] text-ink-faint">{dirty ? "Unsaved changes" : "All changes saved"}</span>
-        <Button variant="primary" onClick={() => void save()} disabled={busy || !dirty}>
-          {busy ? "Saving…" : "Save profile"}
+        <Button variant="primary" onClick={() => void save()} disabled={busy || uploading || !dirty}>
+          {busy ? "Saving…" : uploading ? "Uploading…" : "Save profile"}
         </Button>
       </div>
     </div>
