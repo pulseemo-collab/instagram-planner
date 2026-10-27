@@ -9,12 +9,12 @@ import type { SnapshotPatch } from "./workspace-store";
  * returns a new snapshot and leaves its input untouched.
  */
 
-/** The signed-in user's notifications marked read: given ids, or all. */
+/** Notifications marked read for the signed-in user: given ids, or all. */
 export function notificationsRead(ids: string[] | "all"): SnapshotPatch<unknown> {
   return (snapshot) => ({
     ...snapshot,
     notifications: snapshot.notifications.map((n) =>
-      !n.isRead && n.recipientId === snapshot.user.id && (ids === "all" || ids.includes(n.id))
+      !n.isRead && (ids === "all" || ids.includes(n.id))
         ? { ...n, isRead: true }
         : n,
     ),

@@ -37,8 +37,8 @@ export function NotificationBell() {
     [snapshot],
   );
   const unread = notifications.filter((n) => !n.isRead).length;
-  const clientName = (clientId: string) =>
-    snapshot?.clients.find((c) => c.id === clientId)?.name ?? "";
+  const clientName = (clientId: string | null) =>
+    (clientId && snapshot?.clients.find((c) => c.id === clientId)?.name) || "Team";
 
   /* Live updates ---------------------------------------------------------- */
 
@@ -61,7 +61,8 @@ export function NotificationBell() {
               event: "INSERT",
               schema: "public",
               table: "notifications",
-              filter: `recipient_id=eq.${userId}`,
+              // No filter: notifications are team-wide, and Realtime only
+              // delivers the rows RLS lets this user read.
             },
             () => void workspaceStore.refreshSoon(),
           )
@@ -120,7 +121,11 @@ export function NotificationBell() {
         notificationsRead([notification.id]),
       );
     }
-    if (notification.postId) {
+    if (notification.type === "member_signup") {
+      router.push("/team");
+    } else if (!notification.clientId) {
+      return;
+    } else if (notification.postId) {
       router.push(`/clients/${notification.clientId}/posts/${notification.postId}?focus=review`);
     } else {
       router.push(`/clients/${notification.clientId}`);

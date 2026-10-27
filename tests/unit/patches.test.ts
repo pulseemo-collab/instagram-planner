@@ -3,11 +3,12 @@ import { notificationsRead, shareLinkCreated, shareLinkSaved, userRenamed } from
 import type { Activity, AppNotification, ShareLink } from "@/types/domain";
 import { makeSnapshot } from "./fixtures";
 
-const notification = (id: string, recipientId = "u1", isRead = false): AppNotification => ({
+const notification = (id: string, isRead = false): AppNotification => ({
   id,
-  recipientId,
+  audience: "team",
   clientId: "c1",
   postId: null,
+  subjectUserId: null,
   type: "review_feedback_received",
   title: "t",
   message: "m",
@@ -27,14 +28,14 @@ const link = (id: string, token: string, isActive = true): ShareLink => ({
 });
 
 describe("snapshot patches", () => {
-  it("marks only the signed-in user's chosen notifications read, without mutating input", () => {
+  it("marks the chosen notifications read, or all, without mutating input", () => {
     const snapshot = makeSnapshot({
-      notifications: [notification("a"), notification("b"), notification("other", "u2")],
+      notifications: [notification("a"), notification("b"), notification("c")],
     });
     const one = notificationsRead(["a"])(snapshot, undefined);
     expect(one.notifications.map((n) => n.isRead)).toEqual([true, false, false]);
     const all = notificationsRead("all")(snapshot, undefined);
-    expect(all.notifications.map((n) => n.isRead)).toEqual([true, true, false]);
+    expect(all.notifications.map((n) => n.isRead)).toEqual([true, true, true]);
     expect(snapshot.notifications.every((n) => !n.isRead)).toBe(true);
     expect(all).not.toBe(snapshot);
   });

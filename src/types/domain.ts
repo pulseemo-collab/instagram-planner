@@ -27,11 +27,18 @@ export type MediaType = "image" | "video";
  */
 export type CoverSource = "generated" | "frame" | "uploaded";
 export type CommentType = "general" | "change_request";
-/** In-app notification kinds produced by client review responses. */
+/** In-app notification kinds: client review responses, and new sign-ups. */
 export type NotificationType =
   | "review_changes_requested"
   | "review_approved"
-  | "review_feedback_received";
+  | "review_feedback_received"
+  | "member_signup";
+/** Who sees a notification: the whole team, or only the owner (sign-ups). */
+export type NotificationAudience = "team" | "owner";
+/** One owner for the whole platform; everyone else approved is a member. */
+export type UserRole = "owner" | "member";
+/** New accounts wait for the owner's approval before they see any data. */
+export type AccountStatus = "pending" | "approved";
 export type ActivityType =
   | "client_created"
   | "client_updated"
@@ -49,8 +56,23 @@ export interface User {
   email: string;
   displayName: string;
   avatarUrl: string | null;
+  role: UserRole;
+  status: AccountStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+/** An account as listed on the owner's Team page. */
+export interface TeamMember {
+  id: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  status: AccountStatus;
+  /** Pending accounts may not have confirmed their email yet. */
+  emailConfirmed: boolean;
+  createdAt: string;
+  approvedAt: string | null;
 }
 
 export interface Client {
@@ -173,18 +195,23 @@ export interface ShareLink {
 }
 
 /**
- * In-app notification for the workspace owner. Created server-side (Supabase
- * trigger) or by the demo repository when a client responds through a share
- * link — the reviewer never chooses the recipient.
+ * In-app notification for the team. Created server-side (Supabase triggers)
+ * or by the demo repository: client responses through share links (whole
+ * team) and new sign-ups waiting for approval (owner only). Nobody chooses
+ * the audience from the client side.
  */
 export interface AppNotification {
   id: string;
-  recipientId: string;
-  clientId: string;
+  audience: NotificationAudience;
+  /** The client a review event belongs to; null for sign-ups. */
+  clientId: string | null;
   postId: string | null;
+  /** The account a sign-up notification is about. */
+  subjectUserId: string | null;
   type: NotificationType;
   title: string;
   message: string;
+  /** Read by the signed-in user (read state is per person). */
   isRead: boolean;
   createdAt: string;
 }

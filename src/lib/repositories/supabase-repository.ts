@@ -13,14 +13,16 @@ import type {
   Post,
   PostMedia,
   ShareLink,
+  TeamMember,
   User,
 } from "@/types/domain";
-import type {
-  Repository,
-  ShareError,
-  ShareResolution,
-  UploadResult,
-  WorkspaceSnapshot,
+import {
+  TEAM_ERRORS,
+  type Repository,
+  type ShareError,
+  type ShareResolution,
+  type UploadResult,
+  type WorkspaceSnapshot,
 } from "./types";
 
 /* ----------------------------- row mappers ------------------------------ */
@@ -39,8 +41,23 @@ function mapUser(row: Row): User {
     email: asStr(row.email),
     displayName: asStr(row.display_name),
     avatarUrl: asStrOrNull(row.avatar_url),
+    role: row.role === "owner" ? "owner" : "member",
+    status: row.status === "approved" ? "approved" : "pending",
     createdAt: asStr(row.created_at),
     updatedAt: asStr(row.updated_at),
+  };
+}
+
+function mapTeamMember(row: Row): TeamMember {
+  return {
+    id: asStr(row.id),
+    email: asStr(row.email),
+    displayName: asStr(row.display_name),
+    role: row.role === "owner" ? "owner" : "member",
+    status: row.status === "approved" ? "approved" : "pending",
+    emailConfirmed: asBool(row.email_confirmed),
+    createdAt: asStr(row.created_at),
+    approvedAt: asStrOrNull(row.approved_at),
   };
 }
 
@@ -207,16 +224,18 @@ function mapShareLink(row: Row): ShareLink {
   };
 }
 
-function mapNotification(row: Row): AppNotification {
+/** `readIds`: the signed-in user's own read notifications (notification_reads). */
+function mapNotification(row: Row, readIds: Set<string>): AppNotification {
   return {
     id: asStr(row.id),
-    recipientId: asStr(row.recipient_id),
-    clientId: asStr(row.client_id),
+    audience: row.audience === "owner" ? "owner" : "team",
+    clientId: asStrOrNull(row.client_id),
     postId: asStrOrNull(row.post_id),
+    subjectUserId: asStrOrNull(row.subject_user_id),
     type: asStr(row.type) as AppNotification["type"],
     title: asStr(row.title),
     message: asStr(row.message),
-    isRead: asBool(row.is_read),
+    isRead: readIds.has(asStr(row.id)),
     createdAt: asStr(row.created_at),
   };
 }
@@ -250,6 +269,18 @@ const SHARE_RPC_ERRORS: Record<string, ShareError> = {
 function shareErrorFrom(error: { message: string }): ShareError | null {
   return SHARE_RPC_ERRORS[error.message] ?? null;
 }
+
+/** Error codes raised by the 0010 team RPCs, mapped to readable messages. */
+const TEAM_RPC_ERRORS: Record<string, string> = {
+  not_owner: TEAM_ERRORS.notOwner,
+  not_found: TEAM_ERRORS.notPending,
+};
+
+function throwTeamError(error: { message: string } | null): void {
+  if (error) throw new Error(TEAM_RPC_ERRORS[error.message] ?? error.message);
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Known share refusals become a ShareError; anything else is a real failure. */
 function shareErrorOrThrow(error: { message: string }): ShareError {
@@ -287,7 +318,9 @@ export class SupabaseRepository implements Repository {
    * that aren't saved in any row yet (e.g. in progress in another tab) are
    * never touched. A candidate is removed only if:
    * - it is one of this project's media-bucket URLs,
-   * - its path is inside the signed-in owner's own folder (`<user id>/…`),
+   * - its path is inside an approved team member's folder (`<user id>/…`;
+   *   the team shares one workspace, so a member may clean up a file a
+   *   teammate uploaded — never a pending or unknown account's files),
    * - and, re-checked after the change, no row references it any more
    *   (files shared between rows, e.g. a duplicated client, stay).
    * Runs only after the database change succeeded; a failure here never fails
@@ -295,15 +328,21 @@ export class SupabaseRepository implements Repository {
    */
   private async removeUnreferencedMedia(candidates: Array<string | null | undefined>): Promise<void> {
     try {
-      const { data: auth } = await this.sb.auth.getUser();
-      const ownerFolder = auth.user ? `${auth.user.id}/` : null;
-      if (!ownerFolder) return;
-      const urls = [...new Set(candidates)].filter((url): url is string => {
+      const objects = [...new Set(candidates)].flatMap((url) => {
         const object = this.storageObject(url);
-        return (
-          object !== null && object.path.startsWith(ownerFolder) && !object.path.includes("..")
-        );
+        if (!url || !object || object.path.includes("..")) return [];
+        const folder = object.path.split("/")[0];
+        return UUID.test(folder) ? [{ url, folder }] : [];
       });
+      if (!objects.length) return;
+      const team = await this.sb
+        .from("profiles")
+        .select("id")
+        .eq("status", "approved")
+        .in("id", [...new Set(objects.map((object) => object.folder))]);
+      if (team.error) return;
+      const teamFolders = new Set(((team.data ?? []) as Row[]).map((row) => asStr(row.id)));
+      const urls = objects.filter((object) => teamFolders.has(object.folder)).map((object) => object.url);
       for (let start = 0; start < urls.length; start += 40) {
         const chunk = urls.slice(start, start + 40);
         const checks = await Promise.all([
@@ -318,7 +357,7 @@ export class SupabaseRepository implements Repository {
           checks.flatMap((check) => ((check.data ?? []) as Row[]).map((row) => String(row.url))),
         );
         // Exact paths only — storage.remove() deletes the listed objects and
-        // nothing else (and Storage RLS also limits it to the owner's folder).
+        // nothing else (and Storage RLS also limits it to team folders).
         const byBucket = new Map<string, string[]>();
         for (const url of chunk) {
           if (stillUsed.has(url)) continue;
@@ -345,19 +384,42 @@ export class SupabaseRepository implements Repository {
     const { data: auth } = await this.sb.auth.getUser();
     if (!auth.user) throw new Error("Not signed in");
 
-    const [profile, clients, notifications] = await Promise.all([
-      this.sb.from("profiles").select("*").eq("id", auth.user.id).single(),
-      this.sb.from("clients").select("*").order("updated_at", { ascending: false }),
-      this.sb
-        .from("notifications")
-        .select("*")
-        .eq("recipient_id", auth.user.id)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    ]);
+    const profile = await this.sb.from("profiles").select("*").eq("id", auth.user.id).single();
     throwIf(profile.error);
+    const user = mapUser(profile.data as Row);
+    if (user.status !== "approved") {
+      // Waiting for the owner's approval: RLS shows nothing else anyway.
+      return {
+        user,
+        clients: [],
+        highlights: [],
+        posts: [],
+        media: [],
+        comments: [],
+        approvals: [],
+        shareLinks: [],
+        activity: [],
+        notifications: [],
+      };
+    }
+
+    const [clients, notifications] = await Promise.all([
+      this.sb.from("clients").select("*").order("updated_at", { ascending: false }),
+      // Team-wide (plus sign-ups for the owner): RLS decides who sees what.
+      this.sb.from("notifications").select("*").order("created_at", { ascending: false }).limit(100),
+    ]);
     throwIf(clients.error);
     throwIf(notifications.error);
+    const notificationIds = ((notifications.data ?? []) as Row[]).map((row) => asStr(row.id));
+    const reads = notificationIds.length
+      ? await this.sb
+          .from("notification_reads")
+          .select("notification_id")
+          .eq("user_id", auth.user.id)
+          .in("notification_id", notificationIds)
+      : { data: [] as Row[], error: null };
+    throwIf(reads.error);
+    const readIds = new Set(((reads.data ?? []) as Row[]).map((row) => asStr(row.notification_id)));
 
     const clientIds = (clients.data ?? []).map((c) => String((c as Row).id));
     const emptyOk = { data: [] as Row[], error: null };
@@ -384,7 +446,7 @@ export class SupabaseRepository implements Repository {
     throwIf(media.error);
 
     return {
-      user: mapUser(profile.data as Row),
+      user,
       clients: ((clients.data ?? []) as Row[]).map(mapClient),
       highlights: ((highlights.data ?? []) as Row[]).map(mapHighlight),
       posts: ((posts.data ?? []) as Row[]).map(mapPost),
@@ -393,7 +455,7 @@ export class SupabaseRepository implements Repository {
       approvals: ((approvals.data ?? []) as Row[]).map(mapApproval),
       shareLinks: ((shareLinks.data ?? []) as Row[]).map(mapShareLink),
       activity: ((activity.data ?? []) as Row[]).map(mapActivity),
-      notifications: ((notifications.data ?? []) as Row[]).map(mapNotification),
+      notifications: ((notifications.data ?? []) as Row[]).map((row) => mapNotification(row, readIds)),
     };
   }
 
@@ -466,8 +528,10 @@ export class SupabaseRepository implements Repository {
       ...((highlights.data ?? []) as Row[]).map((row) => asStrOrNull(row.cover_url)),
       ...(await this.postMediaUrls(((posts.data ?? []) as Row[]).map((row) => asStr(row.id)))),
     ];
-    const { error } = await this.sb.from("clients").delete().eq("id", id);
+    // RLS lets only the owner delete; for anyone else no row matches.
+    const { data, error } = await this.sb.from("clients").delete().eq("id", id).select("id");
     throwIf(error);
+    if (!data?.length) throw new Error(TEAM_ERRORS.deleteClient);
     await this.removeUnreferencedMedia(candidates);
   }
 
@@ -703,20 +767,41 @@ export class SupabaseRepository implements Repository {
   }
 
   async markNotificationRead(id: string): Promise<void> {
-    // RLS restricts the update to the caller's own notifications.
-    const { error } = await this.sb.from("notifications").update({ is_read: true }).eq("id", id);
+    // Read state is per person (notification_reads, migration 0010).
+    const { error } = await this.sb.rpc("mark_notifications_read", { p_ids: [id] });
     throwIf(error);
   }
 
   async markAllNotificationsRead(): Promise<void> {
+    const { error } = await this.sb.rpc("mark_notifications_read", { p_ids: null });
+    throwIf(error);
+  }
+
+  async listTeam(): Promise<TeamMember[]> {
     const { data: auth } = await this.sb.auth.getUser();
     if (!auth.user) throw new Error("Not signed in");
-    const { error } = await this.sb
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("recipient_id", auth.user.id)
-      .eq("is_read", false);
+    const me = await this.sb.from("profiles").select("role, status").eq("id", auth.user.id).single();
+    throwIf(me.error);
+    const { role, status } = me.data as Row;
+    if (role !== "owner" || status !== "approved") throw new Error(TEAM_ERRORS.notOwner);
+    const { data, error } = await this.sb
+      .from("profiles")
+      .select("id, email, display_name, role, status, email_confirmed, created_at, approved_at")
+      .order("created_at", { ascending: false });
     throwIf(error);
+    const order = (member: TeamMember) => (member.status === "pending" ? 0 : 1);
+    return ((data ?? []) as Row[]).map(mapTeamMember).sort((a, b) => order(a) - order(b));
+  }
+
+  async approveMember(userId: string): Promise<void> {
+    const { error } = await this.sb.rpc("approve_member", { p_user_id: userId });
+    throwTeamError(error);
+  }
+
+  async rejectMember(userId: string): Promise<void> {
+    // Deletes the auth account (migration 0010), so they can sign up again.
+    const { error } = await this.sb.rpc("reject_member", { p_user_id: userId });
+    throwTeamError(error);
   }
 
   async uploadFile(

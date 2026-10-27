@@ -20,10 +20,11 @@ import type {
   Post,
   PostMedia,
   ShareLink,
+  TeamMember,
   User,
 } from "@/types/domain";
 import { announceWorkspaceChange, onWorkspaceChange } from "./demo-channel";
-import { createEmptySnapshot, createSeedSnapshot } from "./seed";
+import { createEmptySnapshot, createEmptyTeam, createSeedSnapshot, createSeedTeam } from "./seed";
 import type {
   Repository,
   ShareError,
@@ -31,7 +32,7 @@ import type {
   UploadResult,
   WorkspaceSnapshot,
 } from "./types";
-import { SHARE_RATE_LIMITS } from "./types";
+import { SHARE_RATE_LIMITS, TEAM_ERRORS } from "./types";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const LOCAL_PREFIX = "local:";
@@ -96,8 +97,26 @@ function localRefs(state: WorkspaceSnapshot): Set<string> {
  * `scheduledAt`; demo data never leaves this browser, so its local day is
  * exactly the day it was dropped on.
  */
-function normalizeStored(state: WorkspaceSnapshot): WorkspaceSnapshot {
+/**
+ * The stored demo workspace: the snapshot plus the demo team (Team page).
+ * The demo user is always the team's owner; pending accounts are simulated.
+ */
+type DemoState = WorkspaceSnapshot & { team: TeamMember[] };
+
+function normalizeStored(state: DemoState): DemoState {
   if (!Array.isArray(state.notifications)) state.notifications = [];
+  // Before the team workspace: the demo user was the only account.
+  state.user.role ??= "owner";
+  state.user.status ??= "approved";
+  if (!Array.isArray(state.team)) state.team = createSeedTeam();
+  for (const notification of state.notifications) {
+    const legacy = notification as AppNotification & { recipientId?: string };
+    if (legacy.audience === undefined) {
+      legacy.audience = "team";
+      legacy.subjectUserId = null;
+      delete legacy.recipientId;
+    }
+  }
   for (const post of state.posts) {
     if (post.scheduledDay !== undefined) continue;
     if (post.stage === "content" && post.scheduledAt) {
@@ -111,9 +130,12 @@ function normalizeStored(state: WorkspaceSnapshot): WorkspaceSnapshot {
 }
 
 /** True when a stored state predates the current shape and must be repaired. */
-function needsRepair(state: WorkspaceSnapshot): boolean {
+function needsRepair(state: DemoState): boolean {
   return (
     !Array.isArray(state.notifications) ||
+    !Array.isArray(state.team) ||
+    state.user.role === undefined ||
+    state.notifications.some((n) => n.audience === undefined) ||
     state.posts.some((post) => post.scheduledDay === undefined) ||
     hasInlineMedia(state)
   );
@@ -166,21 +188,21 @@ function addActivity(state: WorkspaceSnapshot, input: Omit<Activity, "id" | "cre
 }
 
 /**
- * Owner notification for a client review response. The recipient is always
- * resolved from the client record — never supplied by the reviewer. Skips
- * identical events created moments ago so a retried request stays single.
+ * Team notification for a client review response (the reviewer never picks
+ * who is notified). Skips identical events created moments ago so a retried
+ * request stays single.
  */
 function addNotification(
   state: WorkspaceSnapshot,
-  input: Omit<AppNotification, "id" | "recipientId" | "isRead" | "createdAt">,
+  input: Omit<AppNotification, "id" | "audience" | "subjectUserId" | "isRead" | "createdAt">,
 ): void {
-  const client = state.clients.find((c) => c.id === input.clientId);
-  if (!client) return;
+  if (!state.clients.some((c) => c.id === input.clientId)) return;
   // Deliberately type-agnostic: an approval note is also stored as a
   // comment, and the mirrored message must not notify twice.
   const duplicate = state.notifications.find(
     (n) =>
-      n.recipientId === client.ownerId &&
+      n.audience === "team" &&
+      n.clientId === input.clientId &&
       n.postId === input.postId &&
       n.message === input.message &&
       Date.now() - new Date(n.createdAt).getTime() < 30_000,
@@ -189,7 +211,8 @@ function addNotification(
   state.notifications.unshift({
     ...input,
     id: createId(),
-    recipientId: client.ownerId,
+    audience: "team",
+    subjectUserId: null,
     isRead: false,
     createdAt: now(),
   });
@@ -266,7 +289,7 @@ export class DemoRepository implements Repository {
   readonly mode = "demo" as const;
 
   /** Read cache of the stored state; dropped whenever another tab writes. */
-  private cache: WorkspaceSnapshot | null = null;
+  private cache: DemoState | null = null;
   /** `local:` ref ↔ data URL, both directions (display resolution and undo). */
   private dataUrlByRef = new Map<string, string>();
   private refByDataUrl = new Map<string, string>();
@@ -294,15 +317,15 @@ export class DemoRepository implements Repository {
     }
   }
 
-  private async loadStored(): Promise<WorkspaceSnapshot> {
-    const stored = await idbGetState<WorkspaceSnapshot>();
-    return stored ? normalizeStored(stored) : createSeedSnapshot();
+  private async loadStored(): Promise<DemoState> {
+    const stored = await idbGetState<DemoState>();
+    return stored ? normalizeStored(stored) : { ...createSeedSnapshot(), team: createSeedTeam() };
   }
 
   /** Latest stored workspace (cached until this or another tab writes). */
-  private async read(): Promise<WorkspaceSnapshot> {
+  private async read(): Promise<DemoState> {
     if (this.cache) return this.cache;
-    const stored = await idbGetState<WorkspaceSnapshot>();
+    const stored = await idbGetState<DemoState>();
     if (stored && !needsRepair(stored)) {
       this.cache = stored;
       return stored;
@@ -313,7 +336,7 @@ export class DemoRepository implements Repository {
   }
 
   /** Locked read-modify-write cycle — the only way the stored state changes. */
-  private write<T>(fn: (state: WorkspaceSnapshot) => T | Promise<T>): Promise<T> {
+  private write<T>(fn: (state: DemoState) => T | Promise<T>): Promise<T> {
     return withWriteLock(async () => {
       const state = await this.loadStored();
       const before = localRefs(state);
@@ -382,7 +405,10 @@ export class DemoRepository implements Repository {
   /* ------------------------------ workspace ----------------------------- */
 
   async loadSnapshot(): Promise<WorkspaceSnapshot> {
-    return structuredClone(await this.read());
+    // The team list is owner-only data (Team page), not part of the snapshot.
+    const snapshot: Partial<DemoState> = structuredClone(await this.read());
+    delete snapshot.team;
+    return snapshot as WorkspaceSnapshot;
   }
 
   async updateUser(patch: Partial<Pick<User, "displayName" | "avatarUrl">>): Promise<User> {
@@ -457,6 +483,7 @@ export class DemoRepository implements Repository {
 
   async deleteClient(id: string): Promise<void> {
     await this.write((state) => {
+      if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.deleteClient);
       const postIds = new Set(state.posts.filter((p) => p.clientId === id).map((p) => p.id));
       state.clients = state.clients.filter((c) => c.id !== id);
       state.highlights = state.highlights.filter((h) => h.clientId !== id);
@@ -628,25 +655,51 @@ export class DemoRepository implements Repository {
 
   async markNotificationRead(id: string): Promise<void> {
     const current = await this.read();
-    const unread = current.notifications.some(
-      (n) => n.id === id && n.recipientId === current.user.id && !n.isRead,
-    );
-    if (!unread) return;
+    if (!current.notifications.some((n) => n.id === id && !n.isRead)) return;
     await this.write((state) => {
-      const notification = state.notifications.find(
-        (n) => n.id === id && n.recipientId === state.user.id,
-      );
+      const notification = state.notifications.find((n) => n.id === id);
       if (notification) notification.isRead = true;
     });
   }
 
   async markAllNotificationsRead(): Promise<void> {
     const current = await this.read();
-    if (!current.notifications.some((n) => n.recipientId === current.user.id && !n.isRead)) return;
+    if (!current.notifications.some((n) => !n.isRead)) return;
     await this.write((state) => {
-      for (const notification of state.notifications) {
-        if (notification.recipientId === state.user.id) notification.isRead = true;
+      for (const notification of state.notifications) notification.isRead = true;
+    });
+  }
+
+  /* --------------------------------- team -------------------------------- */
+
+  async listTeam(): Promise<TeamMember[]> {
+    const state = await this.read();
+    if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
+    const order = (m: TeamMember) => (m.status === "pending" ? 0 : 1);
+    return structuredClone(
+      [...state.team].sort((a, b) => order(a) - order(b) || b.createdAt.localeCompare(a.createdAt)),
+    );
+  }
+
+  async approveMember(userId: string): Promise<void> {
+    await this.write((state) => {
+      if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
+      const member = state.team.find((m) => m.id === userId && m.status === "pending");
+      if (!member) throw new Error(TEAM_ERRORS.notPending);
+      member.status = "approved";
+      member.approvedAt = now();
+    });
+  }
+
+  async rejectMember(userId: string): Promise<void> {
+    await this.write((state) => {
+      if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
+      if (!state.team.some((m) => m.id === userId && m.status === "pending")) {
+        throw new Error(TEAM_ERRORS.notPending);
       }
+      // Like deleting the account: gone from the team, with its sign-up notice.
+      state.team = state.team.filter((m) => m.id !== userId);
+      state.notifications = state.notifications.filter((n) => n.subjectUserId !== userId);
     });
   }
 
@@ -778,7 +831,9 @@ export class DemoRepository implements Repository {
       await idbClearAll();
       this.dataUrlByRef.clear();
       this.refByDataUrl.clear();
-      const state = seed ? createSeedSnapshot() : createEmptySnapshot();
+      const state: DemoState = seed
+        ? { ...createSeedSnapshot(), team: createSeedTeam() }
+        : { ...createEmptySnapshot(), team: createEmptyTeam() };
       await idbPutState(state);
       this.cache = state;
       announceWorkspaceChange();

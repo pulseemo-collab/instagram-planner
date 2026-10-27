@@ -1,5 +1,5 @@
 import type { WorkspaceSnapshot } from "./types";
-import type { Activity, AppNotification, Approval, Client, Comment, Highlight, Post, PostMedia, ShareLink } from "@/types/domain";
+import type { Activity, AppNotification, Approval, Client, Comment, Highlight, Post, PostMedia, ShareLink, TeamMember } from "@/types/domain";
 
 /**
  * Demo seed. Media uses `gradient:` placeholder URIs (from/via/to/angle) so
@@ -233,9 +233,20 @@ const shareLinks: ShareLink[] = [
   { id: "sl-3", clientId: kavo.id, token: "demo-kavo-hu1la", isActive: false, expiresAt: null, allowComments: true, allowApproval: false, createdAt: daysAgo(9) },
 ];
 
+/** The demo team: the demo user is the owner; two sign-ups wait for approval. */
+const team: TeamMember[] = [
+  { id: DEMO_USER_ID, email: "demo@gridline.studio", displayName: "Aleandro Rossi", role: "owner", status: "approved", emailConfirmed: true, createdAt: daysAgo(90), approvedAt: daysAgo(90) },
+  { id: "user-sam", email: "sam@gridline.studio", displayName: "Sam Rivera", role: "member", status: "approved", emailConfirmed: true, createdAt: daysAgo(40), approvedAt: daysAgo(39) },
+  { id: "user-pending-1", email: "maya.lindqvist@example.com", displayName: "Maya Lindqvist", role: "member", status: "pending", emailConfirmed: true, createdAt: daysAgo(1, 15), approvedAt: null },
+  { id: "user-pending-2", email: "theo.marchand@example.com", displayName: "Théo Marchand", role: "member", status: "pending", emailConfirmed: false, createdAt: daysAgo(0, 9), approvedAt: null },
+];
+
 const notifications: AppNotification[] = [
-  { id: "n-1", recipientId: DEMO_USER_ID, clientId: kavo.id, postId: "post-k2", type: "review_changes_requested", title: "Jasper Vink requested changes", message: "Cupping moved to Sunday.", isRead: false, createdAt: daysAgo(1, 9) },
-  { id: "n-2", recipientId: DEMO_USER_ID, clientId: aurelle.id, postId: "post-a5", type: "review_changes_requested", title: "Camille Aurelle requested changes", message: "Crop feels too tight on slide two.", isRead: false, createdAt: daysAgo(2, 16) },
+  { id: "n-1", audience: "team", clientId: kavo.id, postId: "post-k2", subjectUserId: null, type: "review_changes_requested", title: "Jasper Vink requested changes", message: "Cupping moved to Sunday.", isRead: false, createdAt: daysAgo(1, 9) },
+  { id: "n-2", audience: "team", clientId: aurelle.id, postId: "post-a5", subjectUserId: null, type: "review_changes_requested", title: "Camille Aurelle requested changes", message: "Crop feels too tight on slide two.", isRead: false, createdAt: daysAgo(2, 16) },
+  // Sign-ups the owner has already seen (read), so the bell's unread count
+  // stays about client responses.
+  { id: "n-signup-1", audience: "owner", clientId: null, postId: null, subjectUserId: "user-pending-1", type: "member_signup", title: "Maya Lindqvist is waiting for approval", message: "maya.lindqvist@example.com", isRead: true, createdAt: daysAgo(1, 15) },
 ];
 
 const activity: Activity[] = [
@@ -254,6 +265,8 @@ export function createSeedSnapshot(): WorkspaceSnapshot {
       email: "demo@gridline.studio",
       displayName: "Aleandro Rossi",
       avatarUrl: null,
+      role: "owner",
+      status: "approved",
       createdAt: daysAgo(90),
       updatedAt: daysAgo(90),
     },
@@ -277,6 +290,8 @@ export function createEmptySnapshot(): WorkspaceSnapshot {
       email: "demo@gridline.studio",
       displayName: "Demo user",
       avatarUrl: null,
+      role: "owner",
+      status: "approved",
       createdAt: now,
       updatedAt: now,
     },
@@ -290,4 +305,17 @@ export function createEmptySnapshot(): WorkspaceSnapshot {
     activity: [],
     notifications: [],
   };
+}
+
+/** The seeded demo team (owner, one member, two pending sign-ups). */
+export function createSeedTeam(): TeamMember[] {
+  return structuredClone(team);
+}
+
+/** The team of an emptied demo workspace: just the owner. */
+export function createEmptyTeam(): TeamMember[] {
+  const now = new Date().toISOString();
+  return [
+    { id: DEMO_USER_ID, email: "demo@gridline.studio", displayName: "Demo user", role: "owner", status: "approved", emailConfirmed: true, createdAt: now, approvedAt: now },
+  ];
 }

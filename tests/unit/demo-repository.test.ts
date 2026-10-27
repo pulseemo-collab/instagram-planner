@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSnapshot } from "@/lib/repositories/types";
+import { TEAM_ERRORS, type WorkspaceSnapshot } from "@/lib/repositories/types";
 
 /*
  * DemoRepository against an in-memory IndexedDB. Every test gets a fresh
@@ -251,5 +251,93 @@ describe("DemoRepository: public share rules", () => {
       "rate_limited",
     );
     expect((await repo.loadSnapshot()).comments.some((c) => c.body === "one too many")).toBe(false);
+  });
+});
+
+describe("DemoRepository: team workspace", () => {
+  /** The seeded state, changed by `edit` and stored as another tab would. */
+  async function storeEdited(edit: (state: Record<string, unknown> & WorkspaceSnapshot) => void) {
+    await newRepo().loadSnapshot();
+    const state = (await idb.idbGetState<Record<string, unknown> & WorkspaceSnapshot>())!;
+    edit(state);
+    await idb.idbPutState(state);
+  }
+
+  it("the demo user is the approved owner; the team lists pending sign-ups first", async () => {
+    const repo = newRepo();
+    const { user } = await repo.loadSnapshot();
+    expect([user.role, user.status]).toEqual(["owner", "approved"]);
+    const team = await repo.listTeam();
+    expect(team.map((m) => m.status)).toEqual(["pending", "pending", "approved", "approved"]);
+    expect(team.find((m) => m.id === user.id)?.role).toBe("owner");
+  });
+
+  it("approving moves a pending account into the team", async () => {
+    const repo = newRepo();
+    await repo.approveMember("user-pending-1");
+    const maya = (await newRepo().listTeam()).find((m) => m.id === "user-pending-1")!;
+    expect(maya.status).toBe("approved");
+    expect(maya.approvedAt).not.toBeNull();
+    await expect(repo.approveMember("user-pending-1")).rejects.toThrow(TEAM_ERRORS.notPending);
+  });
+
+  it("rejecting removes the account and its sign-up notice", async () => {
+    const repo = newRepo();
+    expect((await repo.loadSnapshot()).notifications.some((n) => n.subjectUserId === "user-pending-1")).toBe(true);
+    await repo.rejectMember("user-pending-1");
+    expect((await repo.listTeam()).some((m) => m.id === "user-pending-1")).toBe(false);
+    expect((await repo.loadSnapshot()).notifications.some((n) => n.subjectUserId === "user-pending-1")).toBe(false);
+    // Approved members can't be rejected (that would delete a teammate).
+    await expect(repo.rejectMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notPending);
+  });
+
+  it("a member can't delete clients or manage the team", async () => {
+    await storeEdited((state) => {
+      state.user.role = "member";
+    });
+    const repo = newRepo();
+    await expect(repo.deleteClient("client-aurelle")).rejects.toThrow(TEAM_ERRORS.deleteClient);
+    expect((await repo.loadSnapshot()).clients.some((c) => c.id === "client-aurelle")).toBe(true);
+    await expect(repo.listTeam()).rejects.toThrow(TEAM_ERRORS.notOwner);
+    await expect(repo.approveMember("user-pending-1")).rejects.toThrow(TEAM_ERRORS.notOwner);
+    await expect(repo.rejectMember("user-pending-1")).rejects.toThrow(TEAM_ERRORS.notOwner);
+  });
+
+  it("upgrades a workspace stored before the team workspace", async () => {
+    await storeEdited((state) => {
+      delete state.team;
+      const user = state.user as Partial<WorkspaceSnapshot["user"]>;
+      delete user.role;
+      delete user.status;
+      state.notifications = state.notifications
+        .filter((n) => n.type !== "member_signup")
+        .map((n) => {
+          const legacy: Partial<typeof n> & { recipientId: string } = { ...n, recipientId: state.user.id };
+          delete legacy.audience;
+          delete legacy.subjectUserId;
+          return legacy as typeof n;
+        });
+    });
+    const repo = newRepo();
+    const snapshot = await repo.loadSnapshot();
+    expect([snapshot.user.role, snapshot.user.status]).toEqual(["owner", "approved"]);
+    expect(snapshot.notifications.length).toBeGreaterThan(0);
+    for (const n of snapshot.notifications) {
+      expect(n.audience).toBe("team");
+      expect(n.subjectUserId).toBeNull();
+      expect("recipientId" in n).toBe(false);
+    }
+    expect((await repo.listTeam()).length).toBeGreaterThan(0);
+    expect(await storedJson()).not.toContain("recipientId");
+  });
+
+  it("marking read works on team notifications", async () => {
+    const repo = newRepo();
+    const unread = (await repo.loadSnapshot()).notifications.filter((n) => !n.isRead);
+    expect(unread.length).toBe(2);
+    await repo.markNotificationRead(unread[0].id);
+    expect((await repo.loadSnapshot()).notifications.filter((n) => !n.isRead)).toHaveLength(1);
+    await repo.markAllNotificationsRead();
+    expect((await repo.loadSnapshot()).notifications.every((n) => n.isRead)).toBe(true);
   });
 });

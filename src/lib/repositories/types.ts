@@ -9,10 +9,14 @@ import type {
   Post,
   PostMedia,
   ShareLink,
+  TeamMember,
   User,
 } from "@/types/domain";
 
-/** Snapshot of everything the signed-in user can see. */
+/**
+ * Snapshot of everything the signed-in user can see: the shared team
+ * workspace for approved accounts, only the user record for pending ones.
+ */
 export interface WorkspaceSnapshot {
   user: User;
   clients: Client[];
@@ -23,7 +27,7 @@ export interface WorkspaceSnapshot {
   approvals: Approval[];
   shareLinks: ShareLink[];
   activity: Activity[];
-  /** Newest first, scoped to the signed-in user. */
+  /** Newest first; `isRead` is the signed-in user's own read state. */
   notifications: AppNotification[];
 }
 
@@ -67,6 +71,7 @@ export interface Repository {
   ): Promise<Client>;
   updateClient(id: string, patch: Partial<Client>): Promise<Client>;
   duplicateClient(id: string): Promise<Client>;
+  /** Owner only — members get an error ("Only the workspace owner …"). */
   deleteClient(id: string): Promise<void>;
 
   createHighlight(input: Omit<Highlight, "id" | "createdAt" | "updatedAt">): Promise<Highlight>;
@@ -99,6 +104,13 @@ export interface Repository {
 
   markNotificationRead(id: string): Promise<void>;
   markAllNotificationsRead(): Promise<void>;
+
+  /** Owner only: every account, pending ones first. */
+  listTeam(): Promise<TeamMember[]>;
+  /** Owner only: let a pending account into the workspace. */
+  approveMember(userId: string): Promise<void>;
+  /** Owner only: delete a pending account completely (they can sign up again). */
+  rejectMember(userId: string): Promise<void>;
 
   /** Store a file, returning a persistent reference. Reports progress 0..1. */
   uploadFile(
@@ -140,3 +152,10 @@ export function isShareError(value: unknown): value is ShareError {
     value === "not_found" || value === "inactive" || value === "expired" || value === "rate_limited"
   );
 }
+
+/** Error messages for team rules, shared by both repositories and the UI. */
+export const TEAM_ERRORS = {
+  notOwner: "Only the workspace owner can do this.",
+  deleteClient: "Only the workspace owner can delete clients.",
+  notPending: "That account is no longer waiting for approval.",
+} as const;
