@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/cn";
 import { useWorkspace } from "@/lib/store/hooks";
 import { workspaceStore } from "@/lib/store/workspace-store";
+import { PendingApprovalScreen } from "./pending-approval-screen";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 
@@ -70,6 +71,7 @@ function WorkspaceGate({ children }: { children: ReactNode }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { snapshot } = useWorkspace();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -88,6 +90,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       document.body.style.overflow = "";
     };
   }, [mobileNavOpen, closeMobileNav]);
+
+  // Not approved yet: no sidebar, no pages — only the waiting screen.
+  if (snapshot?.user.status === "pending") return <PendingApprovalScreen user={snapshot.user} />;
 
   return (
     <div className="flex min-h-dvh">

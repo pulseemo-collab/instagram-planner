@@ -8,7 +8,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { SelectField, TextField } from "@/components/ui/field";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { authMode, endDemoSession } from "@/lib/auth/session";
+import { signOut as endSession } from "@/lib/auth/sign-out";
 import { getRepository } from "@/lib/repositories";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
@@ -51,13 +51,7 @@ export default function SettingsPage() {
   }
 
   async function signOut() {
-    if (authMode() === "supabase") {
-      const { getBrowserSupabase } = await import("@/lib/supabase/client");
-      await getBrowserSupabase().auth.signOut();
-    } else {
-      endDemoSession();
-    }
-    await workspaceStore.reset();
+    await endSession();
     router.replace("/login");
     router.refresh();
   }

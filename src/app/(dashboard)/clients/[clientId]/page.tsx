@@ -175,18 +175,20 @@ export default function ClientWorkspacePage() {
                 >
                   Duplicate client
                 </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setDeleteOpen(true);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-red-700 hover:bg-canvas"
-                >
-                  <Trash2 className="size-3.5" aria-hidden="true" />
-                  Delete client
-                </button>
+                {snapshot.user.role === "owner" && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDeleteOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-red-700 hover:bg-canvas"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden="true" />
+                    Delete client
+                  </button>
+                )}
               </span>
             )}
           </span>

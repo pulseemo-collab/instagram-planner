@@ -1,3 +1,4 @@
+import { demoSessionVariant } from "@/lib/auth/session";
 import { localDayKey } from "@/lib/dates";
 import { createId, createToken, slugify } from "@/lib/id";
 import {
@@ -97,6 +98,28 @@ function localRefs(state: WorkspaceSnapshot): Set<string> {
  * `scheduledAt`; demo data never leaves this browser, so its local day is
  * exactly the day it was dropped on.
  */
+/**
+ * "Preview what a new account sees": a just-signed-up account waiting for
+ * approval sees nothing of the workspace (like RLS in Supabase mode).
+ * Nothing is stored; the real demo workspace stays untouched.
+ */
+function pendingPreviewSnapshot(): WorkspaceSnapshot {
+  const now = new Date().toISOString();
+  return {
+    ...createEmptySnapshot(),
+    user: {
+      id: "user-preview-pending",
+      email: "new.teammate@example.com",
+      displayName: "New teammate",
+      avatarUrl: null,
+      role: "member",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+}
+
 /**
  * The stored demo workspace: the snapshot plus the demo team (Team page).
  * The demo user is always the team's owner; pending accounts are simulated.
@@ -405,6 +428,7 @@ export class DemoRepository implements Repository {
   /* ------------------------------ workspace ----------------------------- */
 
   async loadSnapshot(): Promise<WorkspaceSnapshot> {
+    if (demoSessionVariant() === "pending") return pendingPreviewSnapshot();
     // The team list is owner-only data (Team page), not part of the snapshot.
     const snapshot: Partial<DemoState> = structuredClone(await this.read());
     delete snapshot.team;

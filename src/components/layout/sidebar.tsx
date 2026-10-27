@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ChevronsUpDown, Grid3x3, PanelLeftClose, PanelLeft } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { navItems } from "@/lib/navigation";
+import { useWorkspace } from "@/lib/store/hooks";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -16,6 +17,16 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, className }: SidebarProps) {
   const pathname = usePathname();
+  const { snapshot } = useWorkspace();
+  const user = snapshot?.user;
+  const isOwner = user?.role === "owner";
+  const initials =
+    (user?.displayName ?? "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]!.toUpperCase())
+      .join("") || "·";
 
   return (
     <div className={cn("flex h-full flex-col bg-panel", className)}>
@@ -39,7 +50,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, className }:
       {/* Navigation */}
       <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-1">
-          {navItems.map((item) => {
+          {navItems.filter((item) => !item.ownerOnly || isOwner).map((item) => {
             const active =
               item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
@@ -109,16 +120,16 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, className }:
             aria-hidden="true"
             className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent-deep"
           >
-            AR
+            {initials}
           </span>
           {!collapsed && (
             <>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-ink">
-                  Aleandro Rossi
+                  {user?.displayName ?? ""}
                 </span>
                 <span className="block truncate text-[11.5px] text-ink-faint">
-                  Studio owner
+                  {user ? (isOwner ? "Workspace owner" : "Team member") : ""}
                 </span>
               </span>
               <ChevronsUpDown className="size-3.5 shrink-0 text-ink-faint" aria-hidden="true" />

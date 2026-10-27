@@ -92,6 +92,11 @@ function AuthFormInner({ variant }: AuthFormProps) {
     router.replace(nextPath);
   }
 
+  function previewPendingAccount() {
+    startDemoSession("pending");
+    router.replace("/");
+  }
+
   if (confirmEmailFor) {
     return (
       <div role="status">
@@ -168,6 +173,17 @@ function AuthFormInner({ variant }: AuthFormProps) {
           <p className="mt-2 text-center text-[11.5px] leading-relaxed text-ink-faint">
             Demo mode stores everything locally in this browser — no account needed.
           </p>
+          {variant === "login" && (
+            <p className="mt-1 text-center text-[11.5px]">
+              <button
+                type="button"
+                onClick={previewPendingAccount}
+                className="font-medium text-ink-soft underline-offset-2 hover:text-ink hover:underline"
+              >
+                Preview what a new account sees
+              </button>
+            </p>
+          )}
         </div>
       )}
 

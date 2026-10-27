@@ -14,6 +14,7 @@ const routes = [
   { path: "/content", marker: /New post|No content yet/ },
   { path: "/calendar", marker: /Choose a client/ },
   { path: "/previews", marker: /share\// },
+  { path: "/team", marker: /Waiting for approval/ },
   { path: "/settings", marker: /demo mode/ },
 ];
 

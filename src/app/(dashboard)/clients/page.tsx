@@ -24,7 +24,8 @@ function ClientMenu({
 }: {
   onEdit: () => void;
   onDuplicate: () => void;
-  onDelete: () => void;
+  /** Absent for team members: only the workspace owner deletes clients. */
+  onDelete?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -61,18 +62,20 @@ function ClientMenu({
               {item.label}
             </button>
           ))}
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              setOpen(false);
-              onDelete();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-red-700 hover:bg-canvas"
-          >
-            <Trash2 className="size-3.5" aria-hidden="true" />
-            Delete
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false);
+                onDelete();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-red-700 hover:bg-canvas"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              Delete
+            </button>
+          )}
         </span>
       )}
     </span>
@@ -248,7 +251,7 @@ function ClientsPageInner() {
                 <ClientMenu
                   onEdit={() => setEditing(client)}
                   onDuplicate={() => void handleDuplicate(client)}
-                  onDelete={() => setDeleting(client)}
+                  onDelete={snapshot.user.role === "owner" ? () => setDeleting(client) : undefined}
                 />
               }
             />
