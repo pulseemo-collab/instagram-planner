@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { ArrowRight } from "lucide-react";
+import { safeRedirectPath } from "@/lib/auth/redirect";
 import { authMode, startDemoSession } from "@/lib/auth/session";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/field";
@@ -33,8 +34,11 @@ function AuthFormInner({ variant }: AuthFormProps) {
   const [errors, setErrors] = useState<{ email?: string; password?: string; name?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Set after a sign-up that still needs email confirmation (no session yet).
+  const [confirmEmailFor, setConfirmEmailFor] = useState<string | null>(null);
 
-  const nextPath = searchParams.get("next") ?? "/";
+  // Untrusted query value: only same-origin paths are followed (no open redirect).
+  const nextPath = safeRedirectPath(searchParams.get("next"));
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -59,12 +63,17 @@ function AuthFormInner({ variant }: AuthFormProps) {
       const { getBrowserSupabase } = await import("@/lib/supabase/client");
       const supabase = getBrowserSupabase();
       if (variant === "signup") {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { display_name: displayName.trim() } },
         });
         if (error) throw error;
+        if (!data.session) {
+          // Email confirmation is on: there's no session until the link is used.
+          setConfirmEmailFor(email.trim());
+          return;
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -81,6 +90,23 @@ function AuthFormInner({ variant }: AuthFormProps) {
   function continueInDemoMode() {
     startDemoSession();
     router.replace(nextPath);
+  }
+
+  if (confirmEmailFor) {
+    return (
+      <div role="status">
+        <h1 className="text-lg font-semibold tracking-tight text-ink">Check your inbox</h1>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+          We sent a confirmation link to <strong className="text-ink">{confirmEmailFor}</strong>.
+          Open it to activate your account, then sign in.
+        </p>
+        <p className="mt-5 text-center text-[12.5px] text-ink-soft">
+          <Link href="/login" className="font-medium text-ink underline-offset-2 hover:underline">
+            Go to sign in
+          </Link>
+        </p>
+      </div>
+    );
   }
 
   return (

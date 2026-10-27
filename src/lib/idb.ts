@@ -56,6 +56,12 @@ export async function idbGetMedia(id: string): Promise<string | undefined> {
   return requestToPromise(tx.objectStore(MEDIA_STORE).get(id) as IDBRequest<string | undefined>);
 }
 
+export async function idbHasMedia(id: string): Promise<boolean> {
+  const db = await openDb();
+  const tx = db.transaction(MEDIA_STORE, "readonly");
+  return (await requestToPromise(tx.objectStore(MEDIA_STORE).count(id))) > 0;
+}
+
 export async function idbPutMedia(id: string, dataUrl: string): Promise<void> {
   const db = await openDb();
   const tx = db.transaction(MEDIA_STORE, "readwrite");

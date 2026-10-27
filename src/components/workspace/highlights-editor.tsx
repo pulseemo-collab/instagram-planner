@@ -10,7 +10,7 @@ import { TextField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { UploadDropzone } from "@/components/uploads/upload-dropzone";
 import { parseMediaRef } from "@/lib/instagram/map-profile";
-import { useMutate } from "@/lib/store/hooks";
+import { useAction, useMutate } from "@/lib/store/hooks";
 import type { Highlight } from "@/types/domain";
 
 interface HighlightsEditorProps {
@@ -28,16 +28,19 @@ interface HighlightDraft {
 
 export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps) {
   const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
   const sorted = [...highlights].sort((a, b) => a.position - b.position);
 
   const [draft, setDraft] = useState<HighlightDraft | null>(null);
   const [deleting, setDeleting] = useState<Highlight | null>(null);
   const [busy, setBusy] = useState(false);
+  // True while a file is still uploading — saving waits for it.
+  const [uploading, setUploading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
   async function saveDraft() {
-    if (!draft) return;
+    if (!draft || uploading) return;
     if (!draft.title.trim()) {
       setDraftError("Title is required");
       return;
@@ -67,6 +70,8 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
       }
       setDraft(null);
       setDraftError(null);
+    } catch (e) {
+      setDraftError(e instanceof Error ? e.message : "Could not save the highlight");
     } finally {
       setBusy(false);
     }
@@ -77,19 +82,17 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
     if (target < 0 || target >= sorted.length) return;
     const ids = sorted.map((h) => h.id);
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    await mutate((repo) => repo.reorderHighlights(clientId, ids));
+    await run((repo) => repo.reorderHighlights(clientId, ids));
   }
 
   async function confirmDelete() {
     if (!deleting) return;
     setBusy(true);
-    try {
-      await mutate((repo) => repo.deleteHighlight(deleting.id));
-      toast("Highlight deleted");
-      setDeleting(null);
-    } finally {
-      setBusy(false);
-    }
+    const result = await run((repo) => repo.deleteHighlight(deleting.id));
+    setBusy(false);
+    if (!result.ok) return;
+    toast("Highlight deleted");
+    setDeleting(null);
   }
 
   return (
@@ -204,6 +207,7 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
                   bucket="highlights"
                   multiple={false}
                   label="Upload cover"
+                  onBusyChange={setUploading}
                   onUploaded={(items) =>
                     items[0] &&
                     setDraft({ ...draft, coverUrl: items[0].url, coverPreviewUrl: items[0].previewUrl })
@@ -216,8 +220,8 @@ export function HighlightsEditor({ clientId, highlights }: HighlightsEditorProps
               <Button onClick={() => setDraft(null)} disabled={busy}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={() => void saveDraft()} disabled={busy}>
-                {busy ? "Saving…" : "Save highlight"}
+              <Button variant="primary" onClick={() => void saveDraft()} disabled={busy || uploading}>
+                {busy ? "Saving…" : uploading ? "Uploading…" : "Save highlight"}
               </Button>
             </div>
           </div>

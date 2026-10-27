@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { clientApprovalRollup, postsForClient } from "@/lib/derive";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useMutate, useWorkspace } from "@/lib/store/hooks";
 import { APPROVAL_STATUS_LABELS, type ApprovalStatus, type Client } from "@/types/domain";
 
 type ApprovalFilter = "all" | ApprovalStatus;
@@ -82,6 +82,7 @@ function ClientMenu({
 function ClientsPageInner() {
   const { status, snapshot } = useWorkspace();
   const mutate = useMutate();
+  const run = useAction();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -150,7 +151,7 @@ function ClientsPageInner() {
   }
 
   async function handleDuplicate(client: Client) {
-    const copy = await mutate(async (repo) => {
+    const copy = await run(async (repo) => {
       const created = await repo.duplicateClient(client.id);
       await repo.recordActivity({
         clientId: created.id,
@@ -159,19 +160,17 @@ function ClientsPageInner() {
       });
       return created;
     });
-    toast(`Duplicated as ${copy.name}`);
+    if (copy.ok) toast(`Duplicated as ${copy.value.name}`);
   }
 
   async function handleDelete() {
     if (!deleting) return;
     setDeleteBusy(true);
-    try {
-      await mutate((repo) => repo.deleteClient(deleting.id));
-      toast(`${deleting.name} deleted`);
-      setDeleting(null);
-    } finally {
-      setDeleteBusy(false);
-    }
+    const result = await run((repo) => repo.deleteClient(deleting.id));
+    setDeleteBusy(false);
+    if (!result.ok) return;
+    toast(`${deleting.name} deleted`);
+    setDeleting(null);
   }
 
   return (

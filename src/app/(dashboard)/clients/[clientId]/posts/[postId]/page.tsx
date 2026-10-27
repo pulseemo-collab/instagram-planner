@@ -14,9 +14,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { ApprovalBadge, PostStatusBadge } from "@/components/ui/status-badge";
 import { useToast } from "@/components/ui/toast";
-import { formatDateTime } from "@/lib/dates";
+import { dayKeyToNumeric, formatDateTime } from "@/lib/dates";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
 import type { Post, PostMedia } from "@/types/domain";
 
 export default function PostDetailPage() {
@@ -29,7 +29,7 @@ export default function PostDetailPage() {
   // Opened from a notification → bring the review activity into view.
   const focusReview = searchParams.get("focus") === "review";
   const { status, snapshot } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
 
   const [draft, setDraft] = useState<PostDraft | null>(null);
@@ -103,13 +103,11 @@ export default function PostDetailPage() {
 
   async function handleDelete() {
     setDeleteBusy(true);
-    try {
-      await mutate((repo) => repo.deletePost(post!.id));
-      toast("Post deleted");
-      router.push(`/clients/${client!.id}`);
-    } finally {
-      setDeleteBusy(false);
-    }
+    const result = await run((repo) => repo.deletePost(post!.id));
+    setDeleteBusy(false);
+    if (!result.ok) return;
+    toast("Post deleted");
+    router.push(`/clients/${client!.id}`);
   }
 
   return (
@@ -127,10 +125,12 @@ export default function PostDetailPage() {
         </h2>
         <PostStatusBadge status={post.status} />
         <ApprovalBadge status={post.approvalStatus} />
-        {post.scheduledAt && (
+        {(post.scheduledAt || post.scheduledDay) && (
           <span className="inline-flex items-center gap-1 text-[12px] text-ink-faint">
             <CalendarClock className="size-3.5" aria-hidden="true" />
-            {formatDateTime(post.scheduledAt)}
+            {post.scheduledAt
+              ? formatDateTime(post.scheduledAt)
+              : `Placed on ${dayKeyToNumeric(post.scheduledDay!)}`}
           </span>
         )}
         <div className="ml-auto">
@@ -150,7 +150,7 @@ export default function PostDetailPage() {
               theme={client.theme}
               onBack={() => router.push(fromCalendar ? "/calendar" : `/clients/${client.id}`)}
               onSubmitComment={(text) =>
-                void mutate((repo) =>
+                void run((repo) =>
                   repo.createComment({
                     postId: post.id,
                     authorName: snapshot.user.displayName,

@@ -1,8 +1,8 @@
 # Gridline Studio — User Manual
 
 *A complete guide to planning, previewing, and approving Instagram content with your
-clients. Written for the current version of the application; every workflow below was
-verified in a real browser.*
+clients. Updated October 2026 for the audit-fixes release (share-link permissions,
+search, settings defaults, timezone-free content days, clearer error states).*
 
 ---
 
@@ -31,8 +31,10 @@ Nothing is ever published to Instagram — the app is a planning and approval sp
   stored inside your browser and persists across refreshes. Three sample clients are
   pre-loaded. This is the default when the app has no Supabase configuration.
 - **Live mode** — when the app is connected to Supabase, use your email and password,
-  or create an account on `/signup` (name, email, password of 8+ characters). After
-  signing in you are returned to the page you originally requested.
+  or create an account on `/signup` (name, email, password of 8+ characters). If the
+  project requires email confirmation, signup shows **Check your inbox**: open the link
+  in the email, then sign in. After signing in you are returned to the page you
+  originally requested (only pages inside the app — links to other sites are ignored).
 - Validation problems (missing email, short password, invalid address) appear under
   the corresponding fields.
 
@@ -75,8 +77,15 @@ scheduled post goes out.
 - On **mobile**, the sidebar becomes a drawer: open it with the menu button (top-left),
   close it with the X, the Escape key, or by tapping the backdrop. Navigating closes
   it automatically.
-- The top bar always offers **search** (visual placeholder — see Limitations),
-  **notifications** (indicator only), and the **New client** button.
+- The top bar always offers **search**, **notifications**, and the **New client**
+  button:
+  - **Search** finds clients (name, @username) and posts or content packages (name,
+    caption) in your workspace — accents don't matter ("heritage" finds "Héritage").
+    Press **⌘K** (Mac) or **Ctrl+K** from anywhere, use ↑/↓ and Enter to open a result,
+    Escape to clear. On phones, tap the 🔍 button.
+  - **Notifications** (the bell) shows client responses from share links — approvals,
+    change requests and comments — with an unread count; open one to jump to the post,
+    or **Mark all as read**. It updates live while the app is open.
 
 ---
 
@@ -89,7 +98,8 @@ scheduled post goes out.
    letters, numbers, dots, underscores, max 30).
 3. Optionally: **Profile name** (defaults to the client name), **profile picture**
    (drag a JPG/PNG/WEBP onto the upload area or click it to browse), **account type**
-   (Business / Creator / Personal), and **preview theme** (Light / Dark).
+   (Business / Creator / Personal), and **preview theme** (Light / Dark — preselected
+   from *Settings → Defaults*).
 4. Click **Create client**.
 
 **Afterward:** the client is saved, an activity entry is recorded, and you are taken
@@ -103,8 +113,10 @@ straight to their workspace at `/clients/<id>`.
 workspace toolbar).
 
 - **Edit details** — reopens the creation dialog with current values.
-- **Duplicate** — creates "«Name» copy" including all posts, media, and highlights.
-  Useful for seasonal variants or testing a different feed order.
+- **Duplicate** — creates "«Name» copy" including all posts, content packages, media,
+  and highlights (not comments, approvals, or share links). Very long names are
+  shortened so the "copy" suffix fits. Useful for seasonal variants or testing a
+  different feed order.
 - **Delete** — asks for confirmation, then permanently removes the client *and* all
   their posts, highlights, comments, approvals, and share links. This cannot be
   undone.
@@ -330,7 +342,7 @@ uploads) and **Posts** (what the scheduler creates from it).
   - Media can be added as individual files (**Choose files** or drag-and-drop) or
     as a whole **folder** (**Choose folder**, or drop a folder onto the dropzone in
     Chromium-based browsers). Folders are read recursively — nested subfolders
-    included — and every supported file (JPG, PNG, WEBP, MP4, WebM) joins the same
+    included — and every supported file (JPG, PNG, WEBP, MP4, WebM, MOV) joins the same
     content package in folder-path order. Hidden/system files (`.DS_Store`,
     `Thumbs.db`, `desktop.ini`) are ignored, unsupported files are skipped without
     failing the import, and exact duplicates are never added twice. A status line
@@ -360,9 +372,12 @@ onto the Content section to unschedule, or use the card's **Schedule** button fo
 date dialog (the touch- and keyboard-friendly path — date only; time comes at
 Create post).
 
-Month navigation with **Today** and local-timezone dates (a post scheduled for
-00:15 on the 1st stays on the 1st) carry over. Content packages never appear on the
-Instagram grid, the content library, or dashboard counts until they become posts.
+Month navigation with **Today** is remembered for the session. **Content days are
+the same date for everyone**: a package placed on 1 August shows on 1 August for every
+teammate, whatever their timezone. A real post's publishing time is a moment in time,
+shown in each viewer's local time (a post scheduled for 00:15 on the 1st stays on the
+1st for you). Content packages never appear on the Instagram grid, the content
+library, or dashboard counts until they become posts.
 
 ---
 
@@ -373,8 +388,12 @@ Instagram grid, the content library, or dashboard counts until they become posts
 Workspace → **Share**. In the dialog:
 
 - optionally set an **expiration date**;
-- toggle **Allow comments** and **Allow approvals**;
+- toggle **Allow comments** and **Allow approvals** (preselected from *Settings →
+  Defaults → Default approval flow*);
 - click **Create share link**.
+
+The permissions are enforced by the server, not just hidden in the page: a link with
+comments or approvals off really is view-only for those actions.
 
 Each link row shows its URL, created/expiry dates, permissions, a **copy** button, an
 **open in new tab** button, **Disable/Enable**, and **Regenerate** (issues a new token
@@ -387,11 +406,19 @@ the client's chosen theme — no app chrome, no editing controls — plus a revi
 
 1. They enter their **name and email** once (validated, remembered on their device).
 2. Tapping a post opens Instagram's post detail inside the preview with a per-post
-   panel: **Approve** (message optional), **Request changes** (message required), or
-   **Comment only**.
-3. From the grid view they can **Approve all pending** at once.
+   panel: **Approve** (message optional, with a confirmation step), **Request changes**
+   (message required), or **Comment only** — each shown only if the link allows it. A
+   message sent with a decision also appears in the post's comments (unless comments
+   are off).
+3. From the grid view they can **Approve all pending**: it approves exactly the posts
+   you marked *Awaiting approval*. If it can't finish (for example, too many responses
+   in a short time), it says how many were approved and that the rest can be retried.
 
-Invalid, disabled, and expired links each show a polished explanatory page.
+Reviewers see only **completed posts** — never your calendar content packages — and
+never other reviewers' email addresses. To prevent spam, one link accepts at most 60
+responses per 10 minutes (300 per day); beyond that the reviewer sees "Too many
+responses — try again in a few minutes". Invalid, disabled, and expired links each show
+their own explanatory page.
 
 ### Managing all links
 
@@ -405,12 +432,15 @@ progress (`3/8 approved`), and the same copy/open/disable/regenerate actions.
 
 1. You mark posts **Awaiting approval** (per post, or in bulk on `/content`).
 2. The client approves / requests changes / comments through their share link.
-3. Every decision instantly updates: the **post's badge** everywhere, **dashboard
-   counts** and **activity feed**, the **client card roll-up** (e.g. "Changes
-   requested" wins over everything until resolved), the **content page**, and the
-   **calendar** chips' underlying data.
-4. You read feedback on the post detail page, **Mark resolved** handled comments, edit
-   the content, and **Send for approval** again.
+3. Every decision instantly updates: the **post's badge** everywhere, the
+   **notification bell** (live, while the app is open), **dashboard counts** and
+   **activity feed**, the **client card roll-up** (e.g. "Changes requested" wins over
+   everything until resolved), the **content page**, and the **calendar** chips'
+   underlying data.
+4. Open the notification (or the post) to read the request in the post's **Client
+   review** section and in the preview's comments, edit the content, and send it for
+   review again (**Resubmit for review**). *(Comments have a "resolved" flag in the
+   data, but no screen toggles it yet — see Known Issues.)*
 
 ---
 
@@ -420,8 +450,10 @@ progress (`3/8 approved`), and the same copy/open/disable/regenerate actions.
 
 - **Your profile:** display name (shown in the sidebar and dashboard greeting); email
   is read-only.
-- **Defaults:** default preview theme for new clients; default approval flow for new
-  share links; your detected timezone (informational — scheduling always uses it).
+- **Defaults:** the default preview theme preselected for new clients, and the
+  default approval flow preselected for new share links (*Comments + approvals*,
+  *Comments only*, or *View only*). They're saved in this browser only. Also shows your
+  detected timezone (post publishing times are entered and shown in local time).
 - **Data:** a clear indicator of **demo mode** vs **Supabase (live)**. In demo mode:
   **Restore demo data** (replaces everything with the original three sample clients)
   and **Delete all data** (start from a truly empty workspace). Both ask for
@@ -459,21 +491,32 @@ browser recreates the same seed data — useful for exploring, but do not mistak
 real sharing.) Connect Supabase for genuinely public preview links.
 
 **Connecting Supabase:** copy `.env.example` → `.env.local`, fill in your project URL
-and anon key, run `supabase/migrations/0001_init.sql` against the project, restart the
-app.
+and anon key, apply **every** file in `supabase/migrations/` in order (0001 → 0009),
+then **rebuild** the app (`npm run build`) — demo/live mode is fixed when the app is
+built, so a restart alone isn't enough. For an existing production project, follow
+`docs/DEPLOY_GUIDE.md`.
 
 ---
 
 ## 21. Troubleshooting
 
-- **"Loading workspace…" forever / sent to login unexpectedly** — your session ended;
-  sign in or press *Continue in demo mode* again. Demo data is untouched.
+- **Sent to login unexpectedly** — your session ended; sign in or press *Continue in
+  demo mode* again. Demo data is untouched.
+- **"Couldn't load your workspace"** — the data couldn't be loaded (connection or
+  storage problem). Press **Retry**; nothing is lost.
+- **"Couldn't refresh your workspace — showing what was loaded earlier"** — a
+  background update failed; what you see may be slightly out of date. Press **Retry**.
+- **"Couldn't save your changes"** — the save failed and nothing was changed; try
+  again. (Forms show the reason inline instead.)
+- **A reviewer sees "Too many responses"** — that link received more than 60 responses
+  in 10 minutes (or 300 in a day); it clears by itself.
 - **A share link shows "Preview not found"** — in demo mode this is expected on other
   devices (see above). Otherwise the token was regenerated — copy the current link
   from *Shared previews*.
 - **"Preview disabled" / "Preview expired"** — re-enable the link or create a new one.
-- **An upload is rejected** — check the format (JPG/PNG/WEBP; video only for reels)
-  and size (12 MB image / 25 MB video). The exact reason is shown next to the file.
+- **An upload is rejected** — check the format (JPG/PNG/WEBP; MP4/WebM/MOV video
+  only for reels) and size (12 MB image / 25 MB video). The exact reason is shown next
+  to the file.
 - **My edits vanished** — profile edits must be saved with **Save profile**; the
   panel warns about unsaved changes.
 - **I wiped my data by accident** — *Settings → Restore demo data* brings back the
@@ -498,8 +541,9 @@ independently.
 **Where do "view counts" on reels come from?** They are display-only mock numbers to
 make the preview feel real — the app plans content, it has no real Instagram metrics.
 
-**Is the top-bar search functional?** Not yet — it's a visual placeholder in this
-version (see Known Issues). Use the search fields on the Clients and Content pages.
+**Is the top-bar search functional?** Yes — press ⌘K / Ctrl+K (or the 🔍 button on
+phones) to search clients and posts. The Clients and Content pages also have their own
+filters.
 
 **What are Reposts and Tagged tabs?** They render Instagram's tab structure for
 fidelity; planned content currently populates Posts and Reels only.

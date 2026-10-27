@@ -10,6 +10,8 @@ import { TextAreaField, TextField } from "@/components/ui/field";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { buildIgPostDetail } from "@/lib/instagram/map-post";
 import { buildIgProfile } from "@/lib/instagram/map-profile";
+import { resolveMediaRefs } from "@/lib/media/resolve-media";
+import { useStoredValue } from "@/lib/use-stored-value";
 import { getRepository, isShareError } from "@/lib/repositories";
 import type { ShareError, ShareResolution } from "@/lib/repositories/types";
 import { APPROVAL_STATUS_LABELS, type ClientBundle } from "@/types/domain";
@@ -21,14 +23,13 @@ interface Reviewer {
   email: string;
 }
 
-function loadReviewer(): Reviewer {
+function parseReviewer(raw: string | null): Reviewer {
   try {
-    const raw = localStorage.getItem(REVIEWER_KEY);
-    if (raw) return JSON.parse(raw) as Reviewer;
+    const stored = raw ? (JSON.parse(raw) as Partial<Reviewer>) : null;
+    return { name: String(stored?.name ?? ""), email: String(stored?.email ?? "") };
   } catch {
-    // fall through
+    return { name: "", email: "" };
   }
-  return { name: "", email: "" };
 }
 
 const shareErrorCopy: Record<ShareError, { title: string; body: string }> = {
@@ -44,7 +45,38 @@ const shareErrorCopy: Record<ShareError, { title: string; body: string }> = {
     title: "Preview expired",
     body: "This link has passed its expiration date. Ask the creator for a new one.",
   },
+  rate_limited: {
+    title: "Too many responses",
+    body: "This link has received a lot of responses in a short time. Please try again in a few minutes.",
+  },
 };
+
+const RATE_LIMITED_TOAST =
+  "Too many responses from this link right now — please try again in a few minutes.";
+
+function postsLabel(count: number): string {
+  return `${count} ${count === 1 ? "post" : "posts"}`;
+}
+
+/** Resolve the token and make its media displayable (demo `local:` refs). */
+async function loadShare(token: string): Promise<ShareResolution | ShareError> {
+  const repo = await getRepository();
+  const result = await repo.resolveShareToken(token);
+  if (!isShareError(result)) {
+    const { bundle } = result;
+    await resolveMediaRefs(repo, {
+      clients: [bundle.client],
+      highlights: bundle.highlights,
+      media: bundle.media,
+    });
+  }
+  return result;
+}
+
+/** Completed posts the owner has sent for review and nobody has answered yet. */
+function pendingPosts(bundle: ClientBundle) {
+  return bundle.posts.filter((p) => p.stage === "post" && p.approvalStatus === "awaiting_approval");
+}
 
 function validateReviewer(reviewer: Reviewer): string | null {
   if (!reviewer.name.trim() || reviewer.name.trim().length < 2) return "Please enter your name.";
@@ -57,10 +89,13 @@ function SharePageInner() {
   const { toast } = useToast();
 
   const [resolution, setResolution] = useState<ShareResolution | ShareError | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [openPostId, setOpenPostId] = useState<string | null>(null);
-  const [reviewer, setReviewer] = useState<Reviewer>(() =>
-    typeof window === "undefined" ? { name: "", email: "" } : loadReviewer(),
-  );
+  // Details remembered from an earlier visit (read without a hydration
+  // mismatch) until the reviewer edits them.
+  const [storedReviewer, setStoredReviewer] = useStoredValue(REVIEWER_KEY);
+  const [reviewerDraft, setReviewerDraft] = useState<Reviewer | null>(null);
+  const reviewer = reviewerDraft ?? parseReviewer(storedReviewer);
   const [feedback, setFeedback] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,26 +117,12 @@ function SharePageInner() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const repo = await getRepository();
-      const result = await repo.resolveShareToken(params.shareToken);
-      if (cancelled) return;
-      if (!isShareError(result)) {
-        // Resolve demo-mode local: media references for display.
-        const bundle = result.bundle;
-        const resolve = async (url: string | null) =>
-          url && url.startsWith("local:") ? repo.resolveMediaUrl(url) : url;
-        bundle.client.avatarUrl = await resolve(bundle.client.avatarUrl);
-        await Promise.all([
-          ...bundle.highlights.map(async (h) => {
-            h.coverUrl = await resolve(h.coverUrl);
-          }),
-          ...bundle.media.map(async (m) => {
-            m.url = (await resolve(m.url)) ?? m.url;
-            m.thumbnailUrl = await resolve(m.thumbnailUrl);
-          }),
-        ]);
+      try {
+        const result = await loadShare(params.shareToken);
+        if (!cancelled) setResolution(result);
+      } catch {
+        if (!cancelled) setLoadFailed(true);
       }
-      setResolution(result);
     })();
     return () => {
       cancelled = true;
@@ -126,6 +147,17 @@ function SharePageInner() {
       bundle.comments.filter((c) => c.postId === openPost.id),
     );
   }, [bundle, openPost]);
+
+  if (loadFailed) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
+        <h1 className="text-lg font-semibold tracking-tight text-ink">Couldn&apos;t load this preview</h1>
+        <p className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-ink-soft">
+          Check your connection and refresh the page to try again.
+        </p>
+      </div>
+    );
+  }
 
   if (resolution === null) {
     return (
@@ -155,13 +187,12 @@ function SharePageInner() {
     const error = validateReviewer(reviewer);
     setFormError(error);
     if (error) return false;
-    localStorage.setItem(REVIEWER_KEY, JSON.stringify(reviewer));
+    setStoredReviewer(JSON.stringify(reviewer));
     return true;
   }
 
   async function refreshBundle() {
-    const repo = await getRepository();
-    const result = await repo.resolveShareToken(params.shareToken);
+    const result = await loadShare(params.shareToken);
     if (!isShareError(result)) setResolution(result);
   }
 
@@ -180,18 +211,13 @@ function SharePageInner() {
         message,
       });
       if (isShareError(result)) {
-        toast("This link no longer accepts approvals", "error");
+        toast(
+          result === "rate_limited" ? RATE_LIMITED_TOAST : "This link no longer accepts approvals",
+          "error",
+        );
         return;
       }
-      if (message) {
-        await repo.submitPublicComment(params.shareToken, {
-          postId,
-          authorName: reviewer.name.trim(),
-          authorEmail: reviewer.email.trim(),
-          body: message,
-          commentType: status === "changes_requested" ? "change_request" : "general",
-        });
-      }
+      // A message is mirrored into the comment thread by the repository.
       await refreshBundle();
       toast(status === "approved" ? "Post approved" : "Change request sent");
       setFeedback("");
@@ -220,10 +246,12 @@ function SharePageInner() {
         authorName: reviewer.name.trim(),
         authorEmail: reviewer.email.trim(),
         body: body.trim().slice(0, 2000),
-        commentType: "general",
       });
       if (isShareError(result)) {
-        toast("This link no longer accepts comments", "error");
+        toast(
+          result === "rate_limited" ? RATE_LIMITED_TOAST : "This link no longer accepts comments",
+          "error",
+        );
         return;
       }
       await refreshBundle();
@@ -240,30 +268,45 @@ function SharePageInner() {
   async function approveAllPending() {
     if (busyRef.current) return;
     if (!persistReviewer()) return;
-    const pending = bundle!.posts.filter(
-      (p) => p.approvalStatus === "awaiting_approval" || p.approvalStatus === "not_sent",
-    );
+    // Exactly the posts counted as "waiting for your approval" below.
+    const pending = pendingPosts(bundle!);
     if (pending.length === 0) {
       toast("Nothing waiting for approval", "info");
       return;
     }
     busyRef.current = true;
     setBusy(true);
+    let approved = 0;
     try {
       const repo = await getRepository();
       for (const post of pending) {
-        await repo.submitPublicApproval(params.shareToken, {
+        const result = await repo.submitPublicApproval(params.shareToken, {
           postId: post.id,
           reviewerName: reviewer.name.trim(),
           reviewerEmail: reviewer.email.trim(),
           status: "approved",
           message: null,
         });
+        if (isShareError(result)) {
+          // Stop at the first refusal and say exactly how far we got.
+          await refreshBundle();
+          toast(
+            result === "rate_limited"
+              ? `Approved ${approved} of ${postsLabel(pending.length)}. Too many responses right now — use “Approve all pending” again in a few minutes for the rest.`
+              : `Approved ${approved} of ${postsLabel(pending.length)}. This link no longer accepts approvals.`,
+            "error",
+          );
+          return;
+        }
+        approved += 1;
       }
       await refreshBundle();
-      toast(`${pending.length} posts approved`);
+      toast(`${postsLabel(approved)} approved`);
     } catch {
-      toast("Something went wrong — not everything was approved. Please try again.", "error");
+      toast(
+        `Approved ${approved} of ${postsLabel(pending.length)}. Something went wrong — please try again for the rest.`,
+        "error",
+      );
       await refreshBundle();
     } finally {
       busyRef.current = false;
@@ -271,7 +314,7 @@ function SharePageInner() {
     }
   }
 
-  const pendingCount = bundle!.posts.filter((p) => p.approvalStatus === "awaiting_approval").length;
+  const pendingCount = pendingPosts(bundle!).length;
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 py-6 sm:px-6">
@@ -319,14 +362,14 @@ function SharePageInner() {
               <TextField
                 label="Name"
                 value={reviewer.name}
-                onChange={(e) => setReviewer((r) => ({ ...r, name: e.target.value }))}
+                onChange={(e) => setReviewerDraft({ ...reviewer, name: e.target.value })}
                 autoComplete="name"
               />
               <TextField
                 label="Email"
                 type="email"
                 value={reviewer.email}
-                onChange={(e) => setReviewer((r) => ({ ...r, email: e.target.value }))}
+                onChange={(e) => setReviewerDraft({ ...reviewer, email: e.target.value })}
                 autoComplete="email"
               />
             </div>

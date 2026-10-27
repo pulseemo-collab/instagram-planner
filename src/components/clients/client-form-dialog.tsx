@@ -6,6 +6,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { SelectField, TextField } from "@/components/ui/field";
 import { UploadDropzone, type UploadedItem } from "@/components/uploads/upload-dropzone";
 import { parseMediaRef } from "@/lib/instagram/map-profile";
+import { getPreferences } from "@/lib/preferences";
 import { MediaArt } from "@/components/instagram/media-art";
 import type { AccountType, Client, Theme } from "@/types/domain";
 
@@ -50,10 +51,13 @@ function ClientFormDialogInner({ onClose, onSubmit, client }: Omit<ClientFormDia
     profileName: client?.profileName ?? "",
     avatarUrl: client?.avatarUrl ?? null,
     accountType: client?.accountType ?? "business",
-    theme: client?.theme ?? "light",
+    // New clients start with the Settings → Defaults preview theme.
+    theme: client?.theme ?? getPreferences().defaultTheme,
   }));
   const [errors, setErrors] = useState<Partial<Record<keyof ClientFormValues, string>>>({});
   const [busy, setBusy] = useState(false);
+  // True while a file is still uploading — saving waits for it.
+  const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   // Object URL for a just-uploaded avatar; the stored `local:` reference is
   // resolved by the workspace store only after saving.
@@ -61,6 +65,7 @@ function ClientFormDialogInner({ onClose, onSubmit, client }: Omit<ClientFormDia
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (uploading) return;
     const nextErrors = validate(values);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
@@ -122,6 +127,7 @@ function ClientFormDialogInner({ onClose, onSubmit, client }: Omit<ClientFormDia
               bucket="avatars"
               multiple={false}
               label="Upload profile picture"
+              onBusyChange={setUploading}
               onUploaded={(items: UploadedItem[]) => {
                 const item = items[0];
                 if (item) {
@@ -164,8 +170,8 @@ function ClientFormDialogInner({ onClose, onSubmit, client }: Omit<ClientFormDia
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? "Saving…" : client ? "Save changes" : "Create client"}
+          <Button type="submit" variant="primary" disabled={busy || uploading}>
+            {busy ? "Saving…" : uploading ? "Uploading…" : client ? "Save changes" : "Create client"}
           </Button>
         </div>
       </form>

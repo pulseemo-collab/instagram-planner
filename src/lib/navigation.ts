@@ -23,15 +23,8 @@ export const navItems: NavItem[] = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-/** Titles for routes that live outside the sidebar navigation. */
-const extraTitles: Record<string, string> = {
-  "/preview": "Profile preview",
-};
-
 export function getPageTitle(pathname: string): string {
   if (pathname === "/") return "Overview";
-  const extra = Object.entries(extraTitles).find(([href]) => pathname.startsWith(href));
-  if (extra) return extra[1];
   const match = navItems.find(
     (item) => item.href !== "/" && pathname.startsWith(item.href),
   );

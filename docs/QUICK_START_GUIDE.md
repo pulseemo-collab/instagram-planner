@@ -73,5 +73,7 @@ feed immediately.
 - **Demo mode:** IndexedDB in your browser. Refresh-safe. `Settings → Data` lets you
   restore the demo seed or wipe everything.
 - **Live mode:** set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
-  `.env.local`, run `supabase/migrations/0001_init.sql` on your project, and the same
-  app stores everything in Postgres + Supabase Storage with real accounts.
+  `.env.local`, apply every file in `supabase/migrations/` **in order** (0001 → 0009),
+  and **rebuild** (`npm run build`), because the mode is fixed at build time. The same app
+  then stores everything in Postgres + Supabase Storage with real accounts. For a
+  project that's already in production, follow `docs/DEPLOY_GUIDE.md`.

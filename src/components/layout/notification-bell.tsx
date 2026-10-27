@@ -6,7 +6,9 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Bell, BellOff, Check, CheckCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/dates";
-import { useMutate, useWorkspace } from "@/lib/store/hooks";
+import { onWorkspaceChange } from "@/lib/repositories/demo-channel";
+import { useAction, useWorkspace } from "@/lib/store/hooks";
+import { notificationsRead } from "@/lib/store/patches";
 import { workspaceStore } from "@/lib/store/workspace-store";
 import type { AppNotification } from "@/types/domain";
 
@@ -17,7 +19,7 @@ import type { AppNotification } from "@/types/domain";
  */
 export function NotificationBell() {
   const { status, snapshot, mode } = useWorkspace();
-  const mutate = useMutate();
+  const run = useAction();
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
@@ -45,7 +47,7 @@ export function NotificationBell() {
 
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
-    let broadcast: BroadcastChannel | null = null;
+    let stopDemoListener: (() => void) | null = null;
 
     if (mode === "supabase") {
       void (async () => {
@@ -61,29 +63,25 @@ export function NotificationBell() {
               table: "notifications",
               filter: `recipient_id=eq.${userId}`,
             },
-            () => void workspaceStore.refresh(),
+            () => void workspaceStore.refreshSoon(),
           )
           .subscribe();
       })();
     } else {
-      // Demo mode: other tabs announce persisted changes on this channel (the
-      // repository also listens and drops its in-memory cache first).
-      try {
-        broadcast = new BroadcastChannel("gridline-workspace");
-        broadcast.onmessage = () => void workspaceStore.refresh();
-      } catch {
-        broadcast = null;
-      }
+      // Demo mode: other tabs announce persisted changes (the repository
+      // listens too and drops its cache before this refresh runs).
+      stopDemoListener = onWorkspaceChange(() => void workspaceStore.refreshSoon());
     }
 
-    // Fallback for both modes: re-fetch when the window regains focus.
-    const onFocus = () => void workspaceStore.refresh();
+    // Change signals above are coalesced, never skipped. Focus is only a
+    // fallback, so it's skipped if the workspace refreshed in the last 30 s.
+    const onFocus = () => void workspaceStore.refreshIfStale(30_000);
     window.addEventListener("focus", onFocus);
 
     return () => {
       cancelled = true;
       if (channel) void channel.unsubscribe();
-      broadcast?.close();
+      stopDemoListener?.();
       window.removeEventListener("focus", onFocus);
     };
   }, [mode, userId]);
@@ -116,7 +114,11 @@ export function NotificationBell() {
   async function openNotification(notification: AppNotification) {
     setOpen(false);
     if (!notification.isRead) {
-      await mutate((repo) => repo.markNotificationRead(notification.id));
+      // A failed mark-read shows a toast but never blocks opening the post.
+      await run(
+        (repo) => repo.markNotificationRead(notification.id),
+        notificationsRead([notification.id]),
+      );
     }
     if (notification.postId) {
       router.push(`/clients/${notification.clientId}/posts/${notification.postId}?focus=review`);
@@ -165,7 +167,9 @@ export function NotificationBell() {
             {notifications.length > 0 && (
               <button
                 type="button"
-                onClick={() => void mutate((repo) => repo.markAllNotificationsRead())}
+                onClick={() =>
+                  void run((repo) => repo.markAllNotificationsRead(), notificationsRead("all"))
+                }
                 disabled={unread === 0}
                 className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11.5px] font-medium text-ink-soft hover:text-ink disabled:opacity-40"
               >
@@ -232,7 +236,12 @@ export function NotificationBell() {
                       <button
                         type="button"
                         aria-label={`Mark "${notification.title}" as read`}
-                        onClick={() => void mutate((repo) => repo.markNotificationRead(notification.id))}
+                        onClick={() =>
+                          void run(
+                            (repo) => repo.markNotificationRead(notification.id),
+                            notificationsRead([notification.id]),
+                          )
+                        }
                         className="mt-2 flex size-7 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-panel-raised hover:text-ink"
                       >
                         <Check className="size-3.5" aria-hidden="true" />

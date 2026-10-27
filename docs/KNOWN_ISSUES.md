@@ -17,13 +17,6 @@ limitations, not defects.*
   the user about this when copying a demo link — see suggestion S-2 in the audit
   report.
 
-## LIMIT-002 — Decorative top-bar controls
-
-- **Status:** Confirmed
-- The global top-bar **search field** filters nothing, and the **notification bell**
-  has an unread dot but no panel. Both look interactive. Documented in the user
-  manual; see suggestions S-3/S-4.
-
 ## LIMIT-004 — Comment "resolve" flag has no creator UI (by design of the calendar redesign)
 
 - **Status:** Product decision (calendar-workspace redesign, July 2026)
@@ -39,6 +32,22 @@ limitations, not defects.*
 - HTML5 drag-and-drop does not fire on touch devices; on phones/tablets the
   card's **Schedule / Reschedule / Unschedule** buttons (date-time dialog) are the
   supported path. Pointer drag works on desktop.
+
+## LIMIT-006 — Abandoned uploads are never cleaned up
+
+- **Status:** Known limitation (deferred by decision, Oct 2026)
+- Files are stored the moment they are uploaded, before the form is saved.
+  Uploads that never end up in a saved row stay in storage: a post, avatar or
+  highlight form that is cancelled, or video-cover frames generated while
+  browsing but not chosen. This applies to demo mode (IndexedDB "media" store)
+  and live mode (Supabase Storage).
+- Files that *were* saved are deleted correctly once the row that used them is
+  deleted or replaced (audit #19). Live mode removes only those exact paths,
+  in the owner's own folder, after re-checking that no row still uses them.
+- Why it isn't swept automatically: an unreferenced file can't be told apart
+  from an upload still in progress in another tab, so a "delete everything
+  unreferenced" sweep could destroy someone's in-progress work. A safe fix
+  needs upload timestamps (e.g. sweep only files unreferenced for > 24 h).
 
 ## LIMIT-003 — Reposts and Tagged tabs are always empty
 

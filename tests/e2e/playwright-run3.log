@@ -1,6 +1,0 @@
-Error: Project(s) "desktop" not found. Available projects: ""
-    at Object.filterProjects (C:\Users\Admin\Desktop\ig-preview\node_modules\playwright\lib\runner\index.js:2096:11)
-    at runTests (C:\Users\Admin\Desktop\ig-preview\node_modules\playwright\lib\cli\testActions.js:61:30)
-    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
-    at async _Command.<anonymous> (C:\Users\Admin\Desktop\ig-preview\node_modules\playwright\lib\program.js:53:7)
-EXIT:1

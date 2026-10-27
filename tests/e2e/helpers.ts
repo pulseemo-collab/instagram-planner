@@ -2,9 +2,17 @@ import { expect, type ConsoleMessage, type Page } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
 
-export const EVIDENCE_DIR = path.join(process.cwd(), "docs", "qa-evidence");
+/**
+ * Where evidence screenshots and the axe report go. By default a normal test
+ * run writes them under test-results/ (git-ignored), so it never rewrites the
+ * committed copies; run with UPDATE_QA_EVIDENCE=1 to refresh docs/qa-evidence/.
+ */
+export const EVIDENCE_DIR =
+  process.env.UPDATE_QA_EVIDENCE === "1"
+    ? path.join(process.cwd(), "docs", "qa-evidence")
+    : path.join(process.cwd(), "test-results", "qa-evidence");
 
-/** Save an evidence screenshot under docs/qa-evidence/<folder>/<name>.png */
+/** Save an evidence screenshot under <EVIDENCE_DIR>/<folder>/<name>.png */
 export async function evidence(page: Page, folder: string, name: string): Promise<void> {
   const dir = path.join(EVIDENCE_DIR, folder);
   fs.mkdirSync(dir, { recursive: true });
@@ -38,6 +46,24 @@ export async function enterDemoCalendar(page: Page, clientId = "client-aurelle")
   await expect(page.getByRole("heading", { name: "Content", exact: true })).toBeVisible({
     timeout: 15_000,
   });
+}
+
+/**
+ * Step the calendar with its month arrows until it shows the given month
+ * (1-based), wherever it started — keeps tests independent of today's date.
+ */
+export async function gotoCalendarMonth(page: Page, year: number, month: number): Promise<void> {
+  const heading = page.getByRole("heading", { level: 2 });
+  const shown = new Date(`1 ${(await heading.textContent()) ?? ""}`);
+  expect(Number.isNaN(shown.getTime()), "calendar month heading is parseable").toBe(false);
+  const delta = (year - shown.getFullYear()) * 12 + (month - 1 - shown.getMonth());
+  const arrow = page.getByRole("button", { name: delta > 0 ? "Next month" : "Previous month" });
+  for (let i = 0; i < Math.abs(delta); i++) await arrow.click();
+  const target = new Date(year, month - 1, 1).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+  await expect(heading).toHaveText(target);
 }
 
 /** Collect console errors + uncaught page errors for later assertions. */

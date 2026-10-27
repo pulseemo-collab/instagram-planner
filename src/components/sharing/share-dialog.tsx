@@ -7,7 +7,10 @@ import { Dialog } from "@/components/ui/dialog";
 import { TextField, ToggleField } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/dates";
-import { useMutate } from "@/lib/store/hooks";
+import { PREFS_KEY, approvalFlowFlags, parsePreferences } from "@/lib/preferences";
+import { useAction } from "@/lib/store/hooks";
+import { shareLinkCreated, shareLinkSaved } from "@/lib/store/patches";
+import { useStoredValue } from "@/lib/use-stored-value";
 import type { ShareLink } from "@/types/domain";
 
 interface ShareDialogProps {
@@ -24,34 +27,41 @@ export function shareUrlFor(token: string): string {
 }
 
 export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }: ShareDialogProps) {
-  const mutate = useMutate();
+  const run = useAction();
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expiresDay, setExpiresDay] = useState("");
-  const [allowComments, setAllowComments] = useState(true);
-  const [allowApproval, setAllowApproval] = useState(true);
+  // Start from Settings → Defaults ("default approval flow"); a switch the
+  // user flips overrides it for links created from this dialog.
+  const [storedPrefs] = useStoredValue(PREFS_KEY);
+  const defaults = approvalFlowFlags(parsePreferences(storedPrefs).defaultApprovals);
+  const [commentsOverride, setAllowComments] = useState<boolean | null>(null);
+  const [approvalOverride, setAllowApproval] = useState<boolean | null>(null);
+  const allowComments = commentsOverride ?? defaults.allowComments;
+  const allowApproval = approvalOverride ?? defaults.allowApproval;
 
   const links = shareLinks.filter((l) => l.clientId === clientId);
 
   async function createLink() {
     setBusy(true);
     try {
-      await mutate(async (repo) => {
-        await repo.createShareLink({
+      const result = await run(async (repo) => {
+        const link = await repo.createShareLink({
           clientId,
           isActive: true,
           expiresAt: expiresDay ? new Date(`${expiresDay}T23:59:59`).toISOString() : null,
           allowComments,
           allowApproval,
         });
-        await repo.recordActivity({
+        const activity = await repo.recordActivity({
           clientId,
           type: "share_link_created",
           description: `Preview link created for ${clientName}`,
         });
-      });
-      toast("Share link created");
+        return { link, activity };
+      }, shareLinkCreated);
+      if (result.ok) toast("Share link created");
     } finally {
       setBusy(false);
     }
@@ -119,7 +129,10 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
                     <button
                       type="button"
                       onClick={() =>
-                        void mutate((repo) => repo.updateShareLink(link.id, { isActive: !link.isActive }))
+                        void run(
+                          (repo) => repo.updateShareLink(link.id, { isActive: !link.isActive }),
+                          shareLinkSaved,
+                        )
                       }
                       className="font-medium text-ink-soft hover:text-ink"
                     >
@@ -128,8 +141,11 @@ export function ShareDialog({ open, onClose, clientId, clientName, shareLinks }:
                     <button
                       type="button"
                       onClick={async () => {
-                        await mutate((repo) => repo.regenerateShareToken(link.id));
-                        toast("Token regenerated — old link no longer works");
+                        const result = await run(
+                          (repo) => repo.regenerateShareToken(link.id),
+                          shareLinkSaved,
+                        );
+                        if (result.ok) toast("Token regenerated — old link no longer works");
                       }}
                       className="inline-flex items-center gap-1 font-medium text-ink-soft hover:text-ink"
                     >

@@ -104,7 +104,14 @@ export interface Post {
   hashtags: string[];
   status: PostStatus;
   approvalStatus: ApprovalStatus;
+  /** Publishing moment of a completed post (stage "post"): a real instant. */
   scheduledAt: string | null;
+  /**
+   * Calendar day a content package (stage "content") is placed on, as a
+   * timezone-free "YYYY-MM-DD" — it shows on the same day for everyone.
+   * Always null for completed posts.
+   */
+  scheduledDay: string | null;
   publishedAt: string | null;
   isPinned: boolean;
   gridPosition: number;

@@ -39,7 +39,17 @@ export interface ShareResolution {
   bundle: ClientBundle;
 }
 
-export type ShareError = "not_found" | "inactive" | "expired";
+/**
+ * Why a public share request was refused. "inactive" also covers a link
+ * whose comments/approvals are switched off for the attempted action.
+ */
+export type ShareError = "not_found" | "inactive" | "expired" | "rate_limited";
+
+/** Per-link reviewer submission limits (mirrored in migration 0006). */
+export const SHARE_RATE_LIMITS = [
+  { windowMs: 10 * 60 * 1000, max: 60 },
+  { windowMs: 24 * 60 * 60 * 1000, max: 300 },
+] as const;
 
 /**
  * Persistence contract implemented by the demo (IndexedDB) and Supabase
@@ -100,12 +110,22 @@ export interface Repository {
   /** Resolve a stored `local:` reference to a displayable URL (demo mode). */
   resolveMediaUrl(url: string): Promise<string>;
 
-  /** Public share access — no auth required. */
+  /**
+   * Public share access — no auth required. The bundle is the reviewer view:
+   * completed posts only (no designer content packages), no reviewer emails,
+   * no share links. `shareLink` carries the link's real permission flags.
+   */
   resolveShareToken(token: string): Promise<ShareResolution | ShareError>;
+  /** Standalone reviewer feedback — always a "general" comment. */
   submitPublicComment(
     token: string,
-    input: Omit<Comment, "id" | "createdAt" | "resolved">,
+    input: Omit<Comment, "id" | "createdAt" | "resolved" | "commentType">,
   ): Promise<Comment | ShareError>;
+  /**
+   * Reviewer decision. A non-empty message is also posted as a companion
+   * comment (change_request / general) when the link allows comments; both
+   * count as ONE submission for rate limiting.
+   */
   submitPublicApproval(
     token: string,
     input: Omit<Approval, "id" | "createdAt" | "updatedAt" | "clientId">,
@@ -116,5 +136,7 @@ export interface Repository {
 }
 
 export function isShareError(value: unknown): value is ShareError {
-  return value === "not_found" || value === "inactive" || value === "expired";
+  return (
+    value === "not_found" || value === "inactive" || value === "expired" || value === "rate_limited"
+  );
 }

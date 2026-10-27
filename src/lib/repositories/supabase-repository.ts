@@ -1,6 +1,6 @@
 "use client";
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import { createId, createToken, slugify } from "@/lib/id";
 import type {
@@ -8,7 +8,6 @@ import type {
   AppNotification,
   Approval,
   Client,
-  ClientBundle,
   Comment,
   Highlight,
   Post,
@@ -119,6 +118,7 @@ function mapPost(row: Row): Post {
     status: asStr(row.status) as Post["status"],
     approvalStatus: asStr(row.approval_status) as Post["approvalStatus"],
     scheduledAt: asStrOrNull(row.scheduled_at),
+    scheduledDay: asStrOrNull(row.scheduled_day),
     publishedAt: asStrOrNull(row.published_at),
     isPinned: asBool(row.is_pinned),
     gridPosition: asNum(row.grid_position),
@@ -142,6 +142,7 @@ function postToRow(patch: Partial<Post>): Row {
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.approvalStatus !== undefined) row.approval_status = patch.approvalStatus;
   if (patch.scheduledAt !== undefined) row.scheduled_at = patch.scheduledAt;
+  if (patch.scheduledDay !== undefined) row.scheduled_day = patch.scheduledDay;
   if (patch.publishedAt !== undefined) row.published_at = patch.publishedAt;
   if (patch.isPinned !== undefined) row.is_pinned = patch.isPinned;
   if (patch.gridPosition !== undefined) row.grid_position = patch.gridPosition;
@@ -234,6 +235,29 @@ function throwIf(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
 }
 
+const MEDIA_BUCKETS = ["avatars", "highlights", "post-media"] as const;
+
+/** Error codes raised by the 0006 share RPCs, mapped to repository errors. */
+const SHARE_RPC_ERRORS: Record<string, ShareError> = {
+  not_found: "not_found",
+  inactive: "inactive",
+  expired: "expired",
+  comments_disabled: "inactive",
+  approvals_disabled: "inactive",
+  rate_limited: "rate_limited",
+};
+
+function shareErrorFrom(error: { message: string }): ShareError | null {
+  return SHARE_RPC_ERRORS[error.message] ?? null;
+}
+
+/** Known share refusals become a ShareError; anything else is a real failure. */
+function shareErrorOrThrow(error: { message: string }): ShareError {
+  const shareError = shareErrorFrom(error);
+  if (!shareError) throw new Error(error.message);
+  return shareError;
+}
+
 /* ------------------------------ repository ------------------------------ */
 
 export class SupabaseRepository implements Repository {
@@ -241,6 +265,80 @@ export class SupabaseRepository implements Repository {
 
   private get sb(): SupabaseClient {
     return getBrowserSupabase();
+  }
+
+  /* -------------------------- storage cleanup --------------------------- */
+
+  /** Bucket + object path of one of this project's public Storage URLs. */
+  private storageObject(url: string | null | undefined): { bucket: string; path: string } | null {
+    const base = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/`;
+    if (!url || !url.startsWith(base)) return null;
+    const rest = url.slice(base.length);
+    const slash = rest.indexOf("/");
+    const bucket = rest.slice(0, slash);
+    if (slash < 0 || !(MEDIA_BUCKETS as readonly string[]).includes(bucket)) return null;
+    return { bucket, path: decodeURIComponent(rest.slice(slash + 1)) };
+  }
+
+  /**
+   * Best-effort removal of the Storage files that belonged to rows just
+   * deleted or replaced. `candidates` are ONLY the URLs those rows held,
+   * read before the change — this never lists or sweeps a bucket, so uploads
+   * that aren't saved in any row yet (e.g. in progress in another tab) are
+   * never touched. A candidate is removed only if:
+   * - it is one of this project's media-bucket URLs,
+   * - its path is inside the signed-in owner's own folder (`<user id>/…`),
+   * - and, re-checked after the change, no row references it any more
+   *   (files shared between rows, e.g. a duplicated client, stay).
+   * Runs only after the database change succeeded; a failure here never fails
+   * the operation, and nothing is removed if the reference check fails.
+   */
+  private async removeUnreferencedMedia(candidates: Array<string | null | undefined>): Promise<void> {
+    try {
+      const { data: auth } = await this.sb.auth.getUser();
+      const ownerFolder = auth.user ? `${auth.user.id}/` : null;
+      if (!ownerFolder) return;
+      const urls = [...new Set(candidates)].filter((url): url is string => {
+        const object = this.storageObject(url);
+        return (
+          object !== null && object.path.startsWith(ownerFolder) && !object.path.includes("..")
+        );
+      });
+      for (let start = 0; start < urls.length; start += 40) {
+        const chunk = urls.slice(start, start + 40);
+        const checks = await Promise.all([
+          this.sb.from("profiles").select("url:avatar_url").in("avatar_url", chunk),
+          this.sb.from("clients").select("url:avatar_url").in("avatar_url", chunk),
+          this.sb.from("highlights").select("url:cover_url").in("cover_url", chunk),
+          this.sb.from("post_media").select("url").in("url", chunk),
+          this.sb.from("post_media").select("url:thumbnail_url").in("thumbnail_url", chunk),
+        ]);
+        if (checks.some((check) => check.error)) return;
+        const stillUsed = new Set(
+          checks.flatMap((check) => ((check.data ?? []) as Row[]).map((row) => String(row.url))),
+        );
+        // Exact paths only — storage.remove() deletes the listed objects and
+        // nothing else (and Storage RLS also limits it to the owner's folder).
+        const byBucket = new Map<string, string[]>();
+        for (const url of chunk) {
+          if (stillUsed.has(url)) continue;
+          const object = this.storageObject(url)!;
+          byBucket.set(object.bucket, [...(byBucket.get(object.bucket) ?? []), object.path]);
+        }
+        await Promise.all(
+          [...byBucket].map(([bucket, paths]) => this.sb.storage.from(bucket).remove(paths)),
+        );
+      }
+    } catch {
+      // Orphaned files only cost storage; never fail the user's action.
+    }
+  }
+
+  /** Current media URLs of the given posts (cleanup candidates). */
+  private async postMediaUrls(postIds: string[]): Promise<string[]> {
+    if (!postIds.length) return [];
+    const { data } = await this.sb.from("post_media").select("url, thumbnail_url").in("post_id", postIds);
+    return ((data ?? []) as Row[]).flatMap((row) => [asStr(row.url), asStrOrNull(row.thumbnail_url) ?? ""]);
   }
 
   async loadSnapshot(): Promise<WorkspaceSnapshot> {
@@ -305,6 +403,10 @@ export class SupabaseRepository implements Repository {
     const row: Row = {};
     if (patch.displayName !== undefined) row.display_name = patch.displayName;
     if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
+    const previous =
+      patch.avatarUrl !== undefined
+        ? (await this.sb.from("profiles").select("avatar_url").eq("id", auth.user.id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("profiles")
       .update(row)
@@ -312,6 +414,7 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.avatar_url)]);
     return mapUser(data as Row);
   }
 
@@ -328,6 +431,10 @@ export class SupabaseRepository implements Repository {
   }
 
   async updateClient(id: string, patch: Partial<Client>): Promise<Client> {
+    const previous =
+      patch.avatarUrl !== undefined
+        ? (await this.sb.from("clients").select("avatar_url").eq("id", id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("clients")
       .update(clientToRow(patch))
@@ -335,42 +442,33 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.avatar_url)]);
     return mapClient(data as Row);
   }
 
   async duplicateClient(id: string): Promise<Client> {
-    const snapshot = await this.loadSnapshot();
-    const source = snapshot.clients.find((c) => c.id === id);
-    if (!source) throw new Error("Client not found");
-    const copy = await this.createClient({
-      ...source,
-      name: `${source.name} copy`,
-      instagramUsername: `${source.instagramUsername}.copy`,
-    });
-    for (const highlight of snapshot.highlights.filter((h) => h.clientId === id)) {
-      await this.createHighlight({ ...highlight, clientId: copy.id });
-    }
-    for (const post of snapshot.posts.filter((p) => p.clientId === id)) {
-      const media = snapshot.media
-        .filter((m) => m.postId === post.id)
-        .map((m) => ({
-          mediaType: m.mediaType,
-          url: m.url,
-          thumbnailUrl: m.thumbnailUrl,
-          coverSource: m.coverSource ?? null,
-          coverTimestamp: m.coverTimestamp ?? null,
-          width: m.width,
-          height: m.height,
-          position: m.position,
-        }));
-      await this.createPost({ ...post, clientId: copy.id }, media);
-    }
-    return copy;
+    // One transaction in Postgres (migration 0008): client, highlights, posts
+    // and media are copied together or not at all.
+    const { data, error } = await this.sb.rpc("duplicate_client", { p_client_id: id });
+    throwIf(error);
+    return mapClient(data as Row);
   }
 
   async deleteClient(id: string): Promise<void> {
+    // Collect the client's files first; rows cascade away with the delete.
+    const [client, highlights, posts] = await Promise.all([
+      this.sb.from("clients").select("avatar_url").eq("id", id).maybeSingle(),
+      this.sb.from("highlights").select("cover_url").eq("client_id", id),
+      this.sb.from("posts").select("id").eq("client_id", id),
+    ]);
+    const candidates = [
+      asStrOrNull((client.data as Row | null)?.avatar_url),
+      ...((highlights.data ?? []) as Row[]).map((row) => asStrOrNull(row.cover_url)),
+      ...(await this.postMediaUrls(((posts.data ?? []) as Row[]).map((row) => asStr(row.id)))),
+    ];
     const { error } = await this.sb.from("clients").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia(candidates);
   }
 
   async createHighlight(
@@ -395,6 +493,10 @@ export class SupabaseRepository implements Repository {
     if (patch.title !== undefined) row.title = patch.title;
     if (patch.coverUrl !== undefined) row.cover_url = patch.coverUrl;
     if (patch.position !== undefined) row.position = patch.position;
+    const previous =
+      patch.coverUrl !== undefined
+        ? (await this.sb.from("highlights").select("cover_url").eq("id", id).maybeSingle()).data
+        : null;
     const { data, error } = await this.sb
       .from("highlights")
       .update(row)
@@ -402,20 +504,24 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.cover_url)]);
     return mapHighlight(data as Row);
   }
 
   async reorderHighlights(clientId: string, orderedIds: string[]): Promise<void> {
-    await Promise.all(
-      orderedIds.map((id, index) =>
-        this.sb.from("highlights").update({ position: index }).eq("id", id).eq("client_id", clientId),
-      ),
-    );
+    // One UPDATE statement (migration 0007): the order changes all at once or not at all.
+    const { error } = await this.sb.rpc("reorder_highlights", {
+      p_client_id: clientId,
+      p_ordered_ids: orderedIds,
+    });
+    throwIf(error);
   }
 
   async deleteHighlight(id: string): Promise<void> {
+    const previous = (await this.sb.from("highlights").select("cover_url").eq("id", id).maybeSingle()).data;
     const { error } = await this.sb.from("highlights").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia([asStrOrNull((previous as Row | null)?.cover_url)]);
   }
 
   async createPost(
@@ -439,7 +545,11 @@ export class SupabaseRepository implements Repository {
           position: index,
         })),
       );
-      throwIf(mediaError);
+      if (mediaError) {
+        // Don't leave a post without its media behind.
+        await this.sb.from("posts").delete().eq("id", post.id);
+        throw new Error(mediaError.message);
+      }
     }
     return post;
   }
@@ -459,40 +569,40 @@ export class SupabaseRepository implements Repository {
     postId: string,
     media: Array<Omit<PostMedia, "id" | "postId" | "createdAt"> & { id?: string }>,
   ): Promise<PostMedia[]> {
-    const { error: deleteError } = await this.sb.from("post_media").delete().eq("post_id", postId);
-    throwIf(deleteError);
-    if (!media.length) return [];
-    const { data, error } = await this.sb
-      .from("post_media")
-      .insert(
-        media.map((m, index) => ({
-          post_id: postId,
-          media_type: m.mediaType,
-          url: m.url,
-          thumbnail_url: m.thumbnailUrl,
-          cover_source: m.coverSource ?? null,
-          cover_timestamp: m.coverTimestamp ?? null,
-          width: m.width,
-          height: m.height,
-          position: index,
-        })),
-      )
-      .select();
+    const previous = await this.postMediaUrls([postId]);
+    // Delete + insert in ONE transaction (migration 0007): a failure leaves
+    // the existing media untouched instead of a post with no media.
+    const { data, error } = await this.sb.rpc("set_post_media", {
+      p_post_id: postId,
+      p_media: media.map((m) => ({
+        media_type: m.mediaType,
+        url: m.url,
+        thumbnail_url: m.thumbnailUrl,
+        cover_source: m.coverSource ?? null,
+        cover_timestamp: m.coverTimestamp ?? null,
+        width: m.width,
+        height: m.height,
+      })),
+    });
     throwIf(error);
+    // Files kept in the new list are still referenced and therefore stay.
+    await this.removeUnreferencedMedia(previous);
     return ((data ?? []) as Row[]).map(mapMedia);
   }
 
   async reorderPosts(clientId: string, orderedIds: string[]): Promise<void> {
-    await Promise.all(
-      orderedIds.map((id, index) =>
-        this.sb.from("posts").update({ grid_position: index }).eq("id", id).eq("client_id", clientId),
-      ),
-    );
+    const { error } = await this.sb.rpc("reorder_posts", {
+      p_client_id: clientId,
+      p_ordered_ids: orderedIds,
+    });
+    throwIf(error);
   }
 
   async deletePost(id: string): Promise<void> {
+    const previous = await this.postMediaUrls([id]);
     const { error } = await this.sb.from("posts").delete().eq("id", id);
     throwIf(error);
+    await this.removeUnreferencedMedia(previous);
   }
 
   async createComment(input: Omit<Comment, "id" | "createdAt">): Promise<Comment> {
@@ -539,7 +649,8 @@ export class SupabaseRepository implements Repository {
       .select()
       .single();
     throwIf(error);
-    await this.sb.from("posts").update({ approval_status: input.status }).eq("id", input.postId);
+    // The approvals trigger (migration 0007) moves the post's approval_status
+    // in the same statement, so the two can't disagree.
     return mapApproval(data as Row);
   }
 
@@ -657,80 +768,72 @@ export class SupabaseRepository implements Repository {
     return url; // Supabase URLs are directly displayable.
   }
 
-  private async shareRequest(token: string) {
-    // Fresh client instance whose PostgREST requests carry the share token
-    // header consumed by current_share_client() in RLS policies.
-    const { createBrowserClient } = await import("@supabase/ssr");
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) throw new Error("Supabase is not configured");
-    return createBrowserClient(url, key, {
-      global: { headers: { "x-share-token": token } },
-    });
+  /**
+   * Dedicated anonymous client for public share requests. Never the cached
+   * browser singleton: that one may carry the owner's session (which would
+   * widen what RLS returns). Share access goes exclusively through the
+   * SECURITY DEFINER RPCs from migration 0006, which take the token as an
+   * argument — no request headers involved.
+   */
+  private publicClient: SupabaseClient | null = null;
+
+  private get shareSb(): SupabaseClient {
+    if (!this.publicClient) {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!url || !key) throw new Error("Supabase is not configured");
+      this.publicClient = createClient(url, key, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          storageKey: "gridline-share-anon",
+        },
+      });
+    }
+    return this.publicClient;
   }
 
   async resolveShareToken(token: string): Promise<ShareResolution | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data: clientRows, error } = await sb.from("clients").select("*").limit(1);
-    if (error) return "not_found";
-    const clientRow = (clientRows ?? [])[0] as Row | undefined;
-    if (!clientRow) return "not_found";
-    const clientId = String(clientRow.id);
+    const { data, error } = await this.shareSb.rpc("resolve_share", { share_token: token });
+    if (error) return shareErrorFrom(error) ?? "not_found";
+    const payload = data as {
+      link: Row;
+      client: Row | null;
+      highlights: Row[];
+      posts: Row[];
+      media: Row[];
+      comments: Row[];
+      approvals: Row[];
+    } | null;
+    if (!payload?.client) return "not_found";
 
-    const [highlights, posts, shareLinkRow] = await Promise.all([
-      sb.from("highlights").select("*").eq("client_id", clientId),
-      sb.from("posts").select("*").eq("client_id", clientId),
-      sb.rpc("share_token_client", { share_token: token }),
-    ]);
-    if (shareLinkRow.error || !shareLinkRow.data) return "not_found";
-
-    const postIds = ((posts.data ?? []) as Row[]).map((p) => String(p.id));
-    const [media, comments, approvals] = await Promise.all([
-      postIds.length ? sb.from("post_media").select("*").in("post_id", postIds) : { data: [], error: null },
-      postIds.length ? sb.from("comments").select("*").in("post_id", postIds) : { data: [], error: null },
-      sb.from("approvals").select("*").eq("client_id", clientId),
-    ]);
-
-    const bundle: ClientBundle = {
-      client: mapClient(clientRow),
-      highlights: ((highlights.data ?? []) as Row[]).map(mapHighlight),
-      posts: ((posts.data ?? []) as Row[]).map(mapPost),
-      media: ((media.data ?? []) as Row[]).map(mapMedia),
-      comments: ((comments.data ?? []) as Row[]).map(mapComment),
-      approvals: ((approvals.data ?? []) as Row[]).map(mapApproval),
-      shareLinks: [],
-    };
     return {
-      shareLink: {
-        id: "public",
-        clientId,
-        token,
-        isActive: true,
-        expiresAt: null,
-        allowComments: true,
-        allowApproval: true,
-      } as ShareLink,
-      bundle,
+      shareLink: mapShareLink({ ...payload.link, token }),
+      bundle: {
+        client: mapClient(payload.client),
+        highlights: payload.highlights.map(mapHighlight),
+        posts: payload.posts.map(mapPost),
+        media: payload.media.map(mapMedia),
+        comments: payload.comments.map(mapComment),
+        approvals: payload.approvals.map(mapApproval),
+        shareLinks: [],
+      },
     };
   }
 
   async submitPublicComment(
     token: string,
-    input: Omit<Comment, "id" | "createdAt" | "resolved">,
+    input: Omit<Comment, "id" | "createdAt" | "resolved" | "commentType">,
   ): Promise<Comment | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data, error } = await sb
-      .from("comments")
-      .insert({
-        post_id: input.postId,
-        author_name: input.authorName,
-        author_email: input.authorEmail,
-        body: input.body,
-        comment_type: input.commentType,
-      })
-      .select()
-      .single();
-    if (error) return "not_found";
+    const { data, error } = await this.shareSb.rpc("submit_share_comment", {
+      share_token: token,
+      p_post_id: input.postId,
+      p_author_name: input.authorName,
+      p_author_email: input.authorEmail,
+      p_body: input.body,
+    });
+    if (error) return shareErrorOrThrow(error);
     return mapComment(data as Row);
   }
 
@@ -738,22 +841,15 @@ export class SupabaseRepository implements Repository {
     token: string,
     input: Omit<Approval, "id" | "createdAt" | "updatedAt" | "clientId">,
   ): Promise<Approval | ShareError> {
-    const sb = await this.shareRequest(token);
-    const { data: clientId } = await sb.rpc("share_token_client", { share_token: token });
-    if (!clientId) return "not_found";
-    const { data, error } = await sb
-      .from("approvals")
-      .insert({
-        client_id: clientId,
-        post_id: input.postId,
-        reviewer_name: input.reviewerName,
-        reviewer_email: input.reviewerEmail,
-        status: input.status,
-        message: input.message,
-      })
-      .select()
-      .single();
-    if (error) return "not_found";
+    const { data, error } = await this.shareSb.rpc("submit_share_approval", {
+      share_token: token,
+      p_post_id: input.postId,
+      p_reviewer_name: input.reviewerName,
+      p_reviewer_email: input.reviewerEmail,
+      p_status: input.status,
+      p_message: input.message,
+    });
+    if (error) return shareErrorOrThrow(error);
     return mapApproval(data as Row);
   }
 }

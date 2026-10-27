@@ -26,12 +26,16 @@ function g(from: string, via: string, to: string, angle = 150): string {
   return `gradient:${from}/${via}/${to}/${angle}`;
 }
 
-type PostSeed = Omit<Post, "clientId" | "createdAt" | "updatedAt"> & { createdAgo: number };
+type PostSeed = Omit<Post, "clientId" | "createdAt" | "updatedAt" | "scheduledDay"> & {
+  createdAgo: number;
+  scheduledDay?: string | null;
+};
 type MediaSeed = Omit<PostMedia, "createdAt">;
 
 function buildPosts(clientId: string, seeds: PostSeed[]): Post[] {
-  return seeds.map(({ createdAgo, ...seed }) => ({
+  return seeds.map(({ createdAgo, scheduledDay, ...seed }) => ({
     ...seed,
+    scheduledDay: scheduledDay ?? null,
     clientId,
     createdAt: daysAgo(createdAgo),
     updatedAt: daysAgo(Math.max(createdAgo - 1, 0)),

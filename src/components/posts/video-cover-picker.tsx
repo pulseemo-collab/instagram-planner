@@ -34,6 +34,8 @@ export interface VideoCoverPickerProps {
   coverSource: CoverSource | null;
   coverTimestamp: number | null;
   onCoverSelected: (selection: CoverSelection) => void;
+  /** True while a cover (generated frame or uploaded image) is still being stored. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 type CoverTab = "suggested" | "frame" | "upload";
@@ -55,6 +57,7 @@ export function VideoCoverPicker({
   coverSource,
   coverTimestamp,
   onCoverSelected,
+  onBusyChange,
 }: VideoCoverPickerProps) {
   const [tab, setTab] = useState<CoverTab>("suggested");
   // Suggestions are keyed by source URL: a stale entry (different src) simply
@@ -67,7 +70,15 @@ export function VideoCoverPicker({
   const suggestions = suggestState?.src === videoUrl ? suggestState.frames : null;
   const suggestionsError = suggestState?.src === videoUrl ? suggestState.error : null;
   const [busy, setBusy] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
   const [frameError, setFrameError] = useState<string | null>(null);
+
+  // Let the post form hold "Save" until the chosen cover is stored.
+  const storing = busy || coverUploading;
+  useEffect(() => {
+    onBusyChange?.(storing);
+  }, [storing, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   // Current-cover <img> load tracking, keyed by URL. A cover only counts as
   // usable once its image actually loads — a non-empty thumbnailUrl that
@@ -460,6 +471,7 @@ export function VideoCoverPicker({
             bucket="post-media"
             multiple={false}
             label="Upload cover image"
+            onBusyChange={setCoverUploading}
             onUploaded={(items) => {
               const item = items[0];
               if (item) {

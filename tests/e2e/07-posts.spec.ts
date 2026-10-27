@@ -34,7 +34,9 @@ test.describe("Uploads & post creation", () => {
   }) => {
     const dialog = await openComposer(page);
     await dialog.locator('input[type="file"]').first().setInputFiles(paths.asset("photo.jpg"));
-    await expect(dialog.locator("li").filter({ hasText: "1" }).first()).toBeVisible();
+    // Upload finished: the file is a slide in the post, and saving is enabled.
+    await expect(dialog.getByRole("button", { name: "Remove slide 1" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Create post" })).toBeEnabled();
     await dialog.getByLabel("Post name").fill("Fresh drop");
     await dialog.getByLabel("Caption").fill("Fresh drop ☕ — Üñíçødé test");
     await dialog.getByLabel("Hashtags").fill("#coffee specialty  #rotterdam");

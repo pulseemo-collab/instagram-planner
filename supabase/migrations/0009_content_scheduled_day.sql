@@ -1,0 +1,106 @@
+-- Timezone-free calendar days for content packages (audit #18; builds on 0008).
+--
+-- A content package dropped on a calendar day used to be stored as LOCAL
+-- MIDNIGHT converted to UTC (posts.scheduled_at), so a viewer in another
+-- timezone could see it on the previous/next day. Content packages now keep
+-- a plain date in posts.scheduled_day; completed posts keep their real
+-- publishing moment in scheduled_at. Two check constraints enforce
+-- "content has a day, posts have a time".
+--
+-- Backfill: existing content rows get
+--   scheduled_day = date(scheduled_at in UTC + 12 hours)
+-- which recovers the day it was dropped on for any owner timezone from
+-- UTC-11 to UTC+12 (the old value was local midnight there), and their
+-- scheduled_at is cleared.
+--
+-- duplicate_client() (0008) is re-created to copy scheduled_day too.
+--
+-- One transaction. Rollback: supabase/rollback/0009_rollback.sql.
+
+begin;
+
+alter table public.posts add column scheduled_day date;
+
+comment on column public.posts.scheduled_day is
+  'Calendar day of a content package (stage = content), timezone-free; null for completed posts.';
+
+update public.posts
+  set scheduled_day = ((scheduled_at at time zone 'UTC') + interval '12 hours')::date,
+      scheduled_at = null
+  where stage = 'content' and scheduled_at is not null;
+
+alter table public.posts
+  add constraint posts_scheduled_day_content_only
+    check (stage = 'content' or scheduled_day is null),
+  add constraint posts_content_has_no_time
+    check (stage = 'post' or scheduled_at is null);
+
+-- 0008 duplicate_client, now also copying scheduled_day.
+create or replace function public.duplicate_client(p_client_id uuid)
+returns public.clients
+language plpgsql volatile security invoker set search_path = '' as $$
+declare
+  v_source public.clients;
+  v_copy public.clients;
+  v_post_ids jsonb;
+begin
+  -- Under RLS only the owner sees the client.
+  select * into v_source from public.clients where id = p_client_id;
+  if not found then raise exception 'not_found'; end if;
+
+  insert into public.clients (
+    owner_id, name, slug, instagram_username, profile_name, avatar_url, category,
+    bio, website, threads_username, note, is_private, is_verified, account_type,
+    posts_count, followers_count, following_count, theme
+  ) values (
+    v_source.owner_id,
+    -- Trimmed so the suffix never breaks the 120 / 60 character limits.
+    left(v_source.name, 115) || ' copy',
+    left(v_source.slug, 40) || '-copy-' || left(replace(gen_random_uuid()::text, '-', ''), 6),
+    left(v_source.instagram_username, 55) || '.copy',
+    v_source.profile_name, v_source.avatar_url, v_source.category,
+    v_source.bio, v_source.website, v_source.threads_username, v_source.note,
+    v_source.is_private, v_source.is_verified, v_source.account_type,
+    v_source.posts_count, v_source.followers_count, v_source.following_count, v_source.theme
+  )
+  returning * into v_copy;
+
+  insert into public.highlights (client_id, title, cover_url, position)
+  select v_copy.id, h.title, h.cover_url, h.position
+  from public.highlights h
+  where h.client_id = v_source.id;
+
+  -- Posts, then their media, as two statements sharing an old→new id map.
+  -- (One statement with CTEs doesn't work: the post_media RLS check can't see
+  -- posts inserted by a sibling CTE of the same statement.)
+  select coalesce(jsonb_object_agg(p.id, gen_random_uuid()), '{}'::jsonb) into v_post_ids
+  from public.posts p
+  where p.client_id = v_source.id;
+
+  insert into public.posts (
+    id, client_id, name, stage, type, caption, location, alt_text, hashtags, status,
+    approval_status, scheduled_at, scheduled_day, published_at, is_pinned, grid_position,
+    likes_count, comments_count
+  )
+  select
+    (v_post_ids ->> p.id::text)::uuid, v_copy.id, p.name, p.stage, p.type, p.caption,
+    p.location, p.alt_text, p.hashtags, p.status, p.approval_status, p.scheduled_at,
+    p.scheduled_day, p.published_at, p.is_pinned, p.grid_position, p.likes_count, p.comments_count
+  from public.posts p
+  where p.client_id = v_source.id;
+
+  insert into public.post_media (
+    post_id, media_type, url, thumbnail_url, cover_source, cover_timestamp, width, height, position
+  )
+  select
+    (v_post_ids ->> m.post_id::text)::uuid, m.media_type, m.url, m.thumbnail_url,
+    m.cover_source, m.cover_timestamp, m.width, m.height, m.position
+  from public.post_media m
+  join public.posts p on p.id = m.post_id
+  where p.client_id = v_source.id;
+
+  return v_copy;
+end;
+$$;
+
+commit;

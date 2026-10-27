@@ -1,11 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import { enterDemo, enterDemoCalendar, evidence, paths, phone } from "./helpers";
+import { enterDemo, enterDemoCalendar, evidence, gotoCalendarMonth, paths, phone } from "./helpers";
 
 test.describe("Content page", () => {
   test("filters narrow results; combined filters and clear work", async ({ page }) => {
     await enterDemo(page, "/content");
     const cards = page.locator("ul li", { has: page.locator('a[href*="/posts/"]') });
+    // Wait for the library to render before counting (the page shows a
+    // skeleton while the workspace loads).
+    await expect(cards.first()).toBeVisible();
     const total = await cards.count();
     expect(total).toBeGreaterThan(10);
 
@@ -472,7 +475,7 @@ test.describe("Calendar workspace", () => {
     await expect(page.locator("body")).toContainText("Post updated");
 
     await enterDemoCalendar(page, "client-aurelle");
-    await page.getByRole("button", { name: "Next month" }).click(); // August 2026
+    await gotoCalendarMonth(page, 2026, 8);
     const day1 = dayCell(page).filter({ hasText: /^1(?!\d)/ }).first();
     await expect(day1.locator("button", { hasText: "Summer lookbook" })).toBeVisible();
   });

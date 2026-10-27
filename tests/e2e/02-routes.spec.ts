@@ -15,7 +15,6 @@ const routes = [
   { path: "/calendar", marker: /Choose a client/ },
   { path: "/previews", marker: /share\// },
   { path: "/settings", marker: /demo mode/ },
-  { path: "/preview", marker: /Instagram profile preview/ },
 ];
 
 test.describe("Route sweep — loads, console, overflow", () => {

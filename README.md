@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gridline Studio (ig-preview)
 
-## Getting Started
+Plan, preview and approve Instagram content with your clients before it goes live.
 
-First, run the development server:
+Build a realistic copy of a client's Instagram profile: bio, avatar, highlights, and a 3-column grid of posts, carousels and reels. Arrange the grid, schedule posts on a calendar, then send the client a public **share link**. They review the feed exactly as it will look, then comment, approve or request changes without an account. You get an in-app notification when they respond. The app does **not** publish to Instagram.
+
+## Two modes
+
+| Mode | When | Data lives in |
+|---|---|---|
+| **Demo** | No Supabase env vars at build time | This browser only (IndexedDB + localStorage). Seeded with 3 sample clients |
+| **Live** | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` set at build time | Supabase: Auth, Postgres (with Row-Level Security), Storage, Realtime |
+
+The mode is **frozen when the app is built** (`next.config.ts`). After adding, changing or removing the env vars, rebuild. A live-mode build has no "Continue in demo mode" button on `/login`.
+
+## Quick start
+
+Requires Node.js 20.9+ (developed on Node 24).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+cp .env.example .env.local     # leave the values blank for demo mode
+npm run dev                    # http://localhost:3000 → "Continue in demo mode"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Production build: `npm run build && npm start`. Lint: `npm run lint`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See `.env.example`. Real values go in `.env.local`, which is git-ignored.
 
-## Learn More
+| Variable | Needed for | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Live mode | Inlined into the browser bundle at build time |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Live mode | Public key; data is protected by RLS |
+| `SUPABASE_SERVICE_ROLE_KEY` | Nothing | Not used by the app. Server-only secret: don't put it on Vercel |
 
-To learn more about Next.js, take a look at the following resources:
+On Vercel, set the two public variables for **every environment that builds**: Production, plus Preview if you test previews against Supabase.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Setting up Supabase (live mode)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Create a Supabase project.
+2. Apply the migrations in `supabase/migrations/` **in order** (SQL editor, `psql`, or `supabase db push`). Each later migration builds on the previous ones.
+   - `0001`–`0005`: schema, RLS, storage buckets, content stage, video covers, review notifications.
+   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days. Read [`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md) first: they must be deployed **together with the matching app version**, and the guide gives the backup, staged Vercel deploy, verification and rollback steps.
+3. Check each applied migration with its script in `supabase/verify/`. They are safe on production: everything is rolled back. Rollback scripts live in `supabase/rollback/`, deliberately outside `migrations/`.
+4. In Supabase → Authentication → URL Configuration, set the **Site URL** to your deployment URL, so confirmation emails link back to the app.
 
-## Deploy on Vercel
+There is no seed data for live mode; the sample clients exist only in demo mode.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Tests
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command | What |
+|---|---|
+| `npm run test:unit` | Vitest unit tests (`tests/unit/`): dates, mappers, search, store ordering, the demo repository against an in-memory IndexedDB |
+| `npm run test:e2e` | Playwright end-to-end tests (`tests/e2e/`, desktop + mobile Chromium, axe scans) against a **demo-mode** build. Run `npx playwright install chromium` once first |
+| `npm run test:sql` | SQL/RLS tests: a throwaway PostgreSQL cluster (needs PostgreSQL 15+ binaries; set `PG_BIN` if they're not on `PATH`) that applies all migrations and runs the verify, rollback-chain and atomicity checks |
+| `npm run test:live` | Live-mode tests (`tests/live/`) against a **local** Supabase (`supabase start`, Docker). They run in CI; the config refuses any non-local Supabase URL |
+| `npm run lint` · `npm run typecheck` | ESLint · TypeScript |
+
+None of them ever touches a hosted Supabase project. GitHub Actions (`.github/workflows/ci.yml`) runs all of them on every push and pull request.
+
+E2E runs write screenshots and reports to `test-results/` and `playwright-report/`, both git-ignored. To refresh the committed screenshots in `docs/qa-evidence/`, set `UPDATE_QA_EVIDENCE=1`. Details: [`docs/PLAYWRIGHT_TESTING.md`](docs/PLAYWRIGHT_TESTING.md).
+
+## Project structure
+
+```
+src/
+  proxy.ts            Next.js 16 proxy (formerly middleware): session refresh + auth redirects (live mode)
+  app/                Routes: (auth) login/signup · (dashboard) app pages · share/[shareToken] public review
+  components/         instagram/ (pure profile/post UI) · posts/ · calendar/ · layout/ · ui/ …
+  lib/repositories/   Repository interface + DemoRepository (IndexedDB) + SupabaseRepository
+  lib/store/          Workspace store (useWorkspace / useMutate / useAction)
+  lib/instagram/      Domain → Instagram view-model mappers
+  types/domain.ts     Shared domain model
+supabase/
+  migrations/  verify/  rollback/
+tests/e2e/            Playwright specs + fixture assets
+docs/                 User manual, routes, known issues, migration guides, QA reports
+```
+
+All data access goes through the `Repository` interface, so any change to it must be made in **both** the demo and Supabase implementations.
+
+## Documentation
+
+- [Quick start guide](docs/QUICK_START_GUIDE.md) and [user manual](docs/USER_MANUAL.md)
+- [Routes & features](docs/ROUTES_AND_FEATURES.md)
+- [Known issues](docs/KNOWN_ISSUES.md)
+- [Playwright testing](docs/PLAYWRIGHT_TESTING.md) and the [test matrix](docs/TEST_MATRIX.md)
+- [Project audit](AUDIT.md)
+
+> This project uses **Next.js 16**, which has breaking changes from earlier versions. The version-matched docs ship in `node_modules/next/dist/docs/`; see `AGENTS.md`.

@@ -20,7 +20,7 @@ export function validateUpload(file: File, allowVideo: boolean): FileValidationR
       ok: false,
       mediaType: "image",
       reason: "type",
-      error: `${file.name}: unsupported type. Use JPG, PNG, WEBP${allowVideo ? ", or MP4/WebM video" : ""}.`,
+      error: `${file.name}: unsupported type. Use JPG, PNG, WEBP${allowVideo ? ", or MP4/WebM/MOV video" : ""}.`,
     };
   }
   if (isVideo && !allowVideo) {

@@ -1,5 +1,27 @@
 # QA Full Audit Report — Gridline Studio
 
+> **Update — October 2026.** This report is the **July 17, 2026** QA record and is kept
+> as written below. Since then:
+>
+> - **A full code audit** ([`AUDIT.md`](../AUDIT.md), 26 Oct 2026) found 28 issues that
+>   this browser-based audit could not see. Some contradict the July verdict of "no
+>   data-loss defects":
+>   - in **demo mode**, edits inlined images into storage, and two tabs could overwrite
+>     each other's changes;
+>   - in **live mode**, share-link "comments/approvals off" wasn't enforced by the
+>     server, and a signed-in owner could see the wrong client on their own share link.
+> - **All 28 are addressed** on the `audit-fixes` branch (Phases 1–8; see the Status
+>   column in `AUDIT.md` §10). The database-side fixes ship as migrations 0006–0009 via
+>   [`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md) and are **not yet applied to production**.
+> - **Test coverage now:** 129 Playwright e2e tests (demo mode, desktop + mobile, axe),
+>   64 unit tests (Vitest), a repeatable SQL/RLS suite (`npm run test:sql`), and a CI
+>   live-mode job against a local Supabase (see
+>   [`PLAYWRIGHT_TESTING.md`](PLAYWRIGHT_TESTING.md)).
+> - **Changed since July:**
+>   - the `/preview` playground was removed (12 routes now);
+>   - the top-bar search and the notification bell are functional;
+>   - test runs no longer rewrite the screenshots in `docs/qa-evidence/`.
+
 **Audit date:** July 17, 2026 · **Auditor:** automated Playwright suite + manual
 browser verification · **App version:** current `main` working tree
 

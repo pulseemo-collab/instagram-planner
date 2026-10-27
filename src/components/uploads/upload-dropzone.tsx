@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { CircleAlert, FolderOpen, RotateCw, UploadCloud, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { createId } from "@/lib/id";
@@ -55,6 +55,12 @@ export interface UploadDropzoneProps {
   allowFolders?: boolean;
   label?: string;
   onUploaded: (items: UploadedItem[]) => void;
+  /**
+   * Reports whether any file is still uploading, so the surrounding form can
+   * hold its save button until every upload has landed (otherwise a fast
+   * click saves without the file).
+   */
+  onBusyChange?: (busy: boolean) => void;
   className?: string;
 }
 
@@ -73,6 +79,7 @@ export function UploadDropzone({
   allowFolders = false,
   label,
   onUploaded,
+  onBusyChange,
   className,
 }: UploadDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -80,6 +87,13 @@ export function UploadDropzone({
   const [items, setItems] = useState<PendingItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [notice, setNotice] = useState<ImportNotice | null>(null);
+
+  const uploading = items.some((item) => item.status === "uploading");
+  useEffect(() => {
+    onBusyChange?.(uploading);
+  }, [uploading, onBusyChange]);
+  // Never leave the parent stuck "busy" if this area unmounts mid-upload.
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const patchItem = useCallback((key: string, patch: Partial<PendingItem>) => {
     setItems((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
@@ -241,7 +255,7 @@ export function UploadDropzone({
 
   const formatsLine = (
     <p className="text-[11.5px] text-ink-faint">
-      JPG, PNG, WEBP{allowVideo ? " · MP4/WebM for reels" : ""}
+      JPG, PNG, WEBP{allowVideo ? " · MP4/WebM/MOV for reels" : ""}
     </p>
   );
 

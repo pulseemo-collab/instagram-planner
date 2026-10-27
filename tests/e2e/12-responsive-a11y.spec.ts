@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  EVIDENCE_DIR,
   enterDemo,
   enterDemoCalendar,
   evidence,
@@ -103,13 +104,12 @@ test.describe("Accessibility", () => {
         nodes: v.nodes.length,
       }));
     }
-    const outDir = path.join(process.cwd(), "docs", "qa-evidence");
-    fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(path.join(outDir, "axe-results.json"), JSON.stringify(results, null, 2));
+    fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+    fs.writeFileSync(path.join(EVIDENCE_DIR, "axe-results.json"), JSON.stringify(results, null, 2));
 
     // BUG-003 (label/nested-interactive) and BUG-004 (color-contrast) are
     // fixed, so the gate now requires a fully clean WCAG A/AA scan. Results
-    // are still recorded to docs/qa-evidence/axe-results.json as evidence.
+    // are still recorded to <EVIDENCE_DIR>/axe-results.json as evidence.
     const all = Object.entries(results).flatMap(([route, violations]) =>
       violations.map((v) => `${route}: ${v.id} (${v.impact}, ${v.nodes} nodes)`),
     );
