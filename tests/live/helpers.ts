@@ -30,8 +30,19 @@ export function uniqueEmail(label: string): string {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.test`;
 }
 
-/** A confirmed user created through the admin API (skips the email step). */
-export async function createUser(label: string, displayName = "Live Tester") {
+export type TestUser = { id: string; email: string; displayName: string };
+
+/**
+ * A confirmed user created through the admin API (skips the email step).
+ * New accounts start pending (migration 0010); by default the helper
+ * approves it as the owner would. The service-role client may change
+ * status/role: the guard trigger only blocks the app's API roles.
+ */
+export async function createUser(
+  label: string,
+  displayName = "Live Tester",
+  { approved = true }: { approved?: boolean } = {},
+): Promise<TestUser> {
   const email = uniqueEmail(label);
   const { data, error } = await admin().auth.admin.createUser({
     email,
@@ -40,15 +51,52 @@ export async function createUser(label: string, displayName = "Live Tester") {
     user_metadata: { display_name: displayName },
   });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
+  if (approved) {
+    const update = await admin()
+      .from("profiles")
+      .update({ status: "approved", approved_at: new Date().toISOString() } as never)
+      .eq("id", data.user.id);
+    if (update.error) throw new Error(`approve: ${update.error.message}`);
+  }
   return { id: data.user.id, email, displayName };
 }
 
-export async function signIn(page: Page, email: string): Promise<void> {
+/**
+ * The workspace's single owner, created (and appointed via the admin client,
+ * like the Supabase dashboard would) the first time a test needs one.
+ */
+export async function ensureOwner(): Promise<TestUser> {
+  const existing = await admin().from("profiles").select("id, email, display_name").eq("role", "owner").maybeSingle();
+  if (existing.error) throw new Error(`ensureOwner: ${existing.error.message}`);
+  if (existing.data) {
+    const row = existing.data as Record<string, unknown>;
+    return { id: String(row.id), email: String(row.email), displayName: String(row.display_name) };
+  }
+  const owner = await createUser("owner", "Team Owner");
+  const appoint = await admin().from("profiles").update({ role: "owner" } as never).eq("id", owner.id);
+  if (appoint.error) throw new Error(`appoint owner: ${appoint.error.message}`);
+  return owner;
+}
+
+/** A Supabase client signed in as `email` — exactly what that user's browser could call. */
+export async function signedInClient(email: string): Promise<SupabaseClient> {
+  const client = anon();
+  const { error } = await client.auth.signInWithPassword({ email, password: PASSWORD });
+  if (error) throw new Error(`signedInClient: ${error.message}`);
+  return client;
+}
+
+export const WAITING_HEADING = "Your account is waiting for approval";
+
+/** Sign in through the UI; `pending` accounts land on the waiting screen. */
+export async function signIn(page: Page, email: string, { pending = false } = {}): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: /Welcome back,/ })).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("heading", { name: pending ? WAITING_HEADING : /Welcome back,/ }),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 /** Insert rows with the admin client; throws on any error. */
@@ -61,7 +109,7 @@ export async function insert(table: string, row: Row | Row[]) {
   return data as Array<Record<string, unknown>>;
 }
 
-/** A client (and optionally completed posts) owned by `ownerId`. */
+/** A client (and optionally completed posts) created by `ownerId`. */
 export async function seedClient(ownerId: string, name: string, postNames: string[] = []) {
   const [client] = await insert("clients", {
     owner_id: ownerId,
