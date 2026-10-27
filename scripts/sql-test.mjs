@@ -22,7 +22,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,16 +92,29 @@ if (init.status !== 0) {
   console.error(init.stderr);
   process.exit(2);
 }
+// Connections go over TCP (127.0.0.1:port). On Linux/macOS the server also
+// creates a Unix socket, by default in /var/run/postgresql, which a normal
+// user (e.g. the GitHub Actions runner) can't write — so put it in workDir.
+// Windows builds don't use that setting.
+const serverOptions = [
+  `-p ${port}`,
+  "-c listen_addresses=127.0.0.1",
+  "-c fsync=off",
+  ...(isWindows ? [] : [`-c unix_socket_directories='${workDir}'`]),
+].join(" ");
+const serverLog = join(workDir, "server.log");
+
 // The server inherits pg_ctl's stdio; capturing it would make spawnSync wait
 // for the server to exit (it hangs on Windows). It logs to a file instead.
 const start = run(
   bin("pg_ctl"),
-  ["-D", dataDir, "-o", `-p ${port} -c listen_addresses=127.0.0.1 -c fsync=off`,
-   "-l", join(workDir, "server.log"), "-w", "start"],
+  ["-D", dataDir, "-o", serverOptions, "-l", serverLog, "-w", "start"],
   { stdio: "ignore" },
 );
 if (start.status !== 0) {
-  console.error(`pg_ctl start failed — see ${join(workDir, "server.log")}`);
+  console.error(`pg_ctl start failed (exit ${start.status ?? start.error?.message}). Server log (${serverLog}):`);
+  console.error(existsSync(serverLog) ? readFileSync(serverLog, "utf8") : "(no server log was written)");
+  rmSync(workDir, { recursive: true, force: true });
   process.exit(2);
 }
 
