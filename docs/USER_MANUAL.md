@@ -33,8 +33,10 @@ Nothing is ever published to Instagram — the app is a planning and approval sp
 - **Live mode** — when the app is connected to Supabase, use your email and password,
   or create an account on `/signup` (name, email, password of 8+ characters). If the
   project requires email confirmation, signup shows **Check your inbox**: open the link
-  in the email, then sign in. After signing in you are returned to the page you
-  originally requested (only pages inside the app — links to other sites are ignored).
+  in the email, then sign in. A **new account waits for the workspace owner's
+  approval** (see *New accounts and the Team page* below). After signing in you are
+  returned to the page you originally requested (only pages inside the app — links to
+  other sites are ignored).
 - Validation problems (missing email, short password, invalid address) appear under
   the corresponding fields.
 
@@ -46,6 +48,26 @@ accounts — the app tells you so and points you to the demo button.
 **Settings → Session → Sign out.** You return to the login page and dashboard pages
 become inaccessible until you sign in (or re-enter demo mode). Demo data itself is
 *not* deleted by signing out.
+
+### New accounts and the Team page
+
+Live mode is one **shared team workspace**: everyone who is approved sees and works on
+the same clients, posts, calendar and share links.
+
+- **Waiting for approval:** a new account sees only *Your account is waiting for
+  approval*, with **Check again** and **Sign out**. Nothing in the workspace is visible
+  until the owner approves it.
+- **Owner:** exactly one account is the workspace owner. It is appointed in the
+  Supabase dashboard (README → *Team and roles*); nobody can change roles in the app.
+- **Team page** (`/team`, owner only, in the sidebar): **Waiting for approval** lists
+  new accounts (with "email not confirmed" if they haven't confirmed yet) with
+  **Approve** and **Reject**; both ask for confirmation. Reject permanently deletes the
+  account — the person can sign up again later. **Members** lists everyone approved.
+- **What members can't do:** delete clients and use the Team page. Everything else —
+  creating and editing clients, posts, content, share links — is open to every member.
+- **Demo mode** plays the owner, with a sample team (one member and two people waiting).
+  To see the waiting screen, click **Preview what a new account sees** on the login page;
+  sign out to return. It doesn't change the demo data.
 
 ---
 
@@ -72,7 +94,9 @@ scheduled post goes out.
 ## 4. Sidebar navigation
 
 - **Overview, Clients, Content, Calendar, Shared previews, Settings** — the six main
-  areas. The active item is highlighted with an accent marker.
+  areas, plus **Team** for the workspace owner. The active item is highlighted with an
+  accent marker. The bottom of the sidebar shows your name and whether you're the
+  owner or a member.
 - **Collapse** shrinks the sidebar to an icon rail on desktop; expand it the same way.
 - On **mobile**, the sidebar becomes a drawer: open it with the menu button (top-left),
   close it with the X, the Escape key, or by tapping the backdrop. Navigating closes
@@ -84,8 +108,10 @@ scheduled post goes out.
     Press **⌘K** (Mac) or **Ctrl+K** from anywhere, use ↑/↓ and Enter to open a result,
     Escape to clear. On phones, tap the 🔍 button.
   - **Notifications** (the bell) shows client responses from share links — approvals,
-    change requests and comments — with an unread count; open one to jump to the post,
-    or **Mark all as read**. It updates live while the app is open.
+    change requests and comments — for the whole team, with your own unread count; open
+    one to jump to the post, or **Mark all as read** (only for you). The owner also gets
+    a notice for each new account waiting for approval, which opens the Team page. It
+    updates live while the app is open.
 
 ---
 
@@ -117,9 +143,9 @@ workspace toolbar).
   and highlights (not comments, approvals, or share links). Very long names are
   shortened so the "copy" suffix fits. Useful for seasonal variants or testing a
   different feed order.
-- **Delete** — asks for confirmation, then permanently removes the client *and* all
-  their posts, highlights, comments, approvals, and share links. This cannot be
-  undone.
+- **Delete** (workspace owner only — members don't see it) — asks for confirmation,
+  then permanently removes the client *and* all their posts, highlights, comments,
+  approvals, and share links. This cannot be undone.
 
 The clients page also provides **search** (name or username), an **approval-state
 filter**, and **sorting** by recent update or name.
@@ -476,7 +502,7 @@ behave like the native app.
 
 | | Demo mode | Live (Supabase) |
 | --- | --- | --- |
-| Account | none — one local demo user | real email/password accounts |
+| Account | none — one local demo user (the owner) | real email/password accounts, approved by the owner |
 | Storage | your browser's IndexedDB | Postgres + Supabase Storage |
 | Persistence | survives refresh/restart in the same browser profile | everywhere you sign in |
 | Share links | resolve only against data in the opening browser (see below) | truly public URLs |
@@ -491,7 +517,7 @@ browser recreates the same seed data — useful for exploring, but do not mistak
 real sharing.) Connect Supabase for genuinely public preview links.
 
 **Connecting Supabase:** copy `.env.example` → `.env.local`, fill in your project URL
-and anon key, apply **every** file in `supabase/migrations/` in order (0001 → 0009),
+and anon key, apply **every** file in `supabase/migrations/` in order (0001 → 0010),
 then **rebuild** the app (`npm run build`) — demo/live mode is fixed when the app is
 built, so a restart alone isn't enough. For an existing production project, follow
 `docs/DEPLOY_GUIDE.md`.

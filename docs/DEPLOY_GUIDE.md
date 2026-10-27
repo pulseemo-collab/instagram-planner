@@ -1,6 +1,180 @@
-# Deploy guide — migrations 0006 → 0009
+# Deploy guide
 
-> **Status: not applied anywhere yet.** These four migrations ship **together, in one deploy**, with the app from the `audit-fixes` branch. The app needs all four; the database is never changed without the matching app going live right after.
+| Release | Migrations | Status |
+|---|---|---|
+| **Team workspace + owner approval** (branch `feature/owner-approval`) | `0010_team_workspace.sql` | **Not applied anywhere yet.** This guide's first part |
+| Audit fixes (branch `audit-fixes`, merged) | `0006` → `0009` | Applied in production. Kept [below](#previous-release--migrations-0006--0009-applied) for reference and rollback |
+
+---
+
+# Release 0010 — team workspace with owner approval
+
+> **This release needs the migration deploy procedure:** Auto-assign off → merge → apply 0010 → Promote (§2). The new app needs 0010, and the old app partly breaks on it, so the two must go live together.
+
+## What ships
+
+`0010_team_workspace.sql`, one transaction:
+
+- **One shared workspace.** Every **approved** account works on the same clients, posts, calendar, share links and notifications. All existing data is merged into it: every existing account becomes an approved member and sees **every** client.
+- **Owner approval.** New sign-ups start **pending**: they see a "Your account is waiting for approval" screen and nothing else (enforced by RLS, not just the UI). The owner gets a notification and approves or rejects them on the new **Team** page. Reject deletes the account completely, so the person can sign up again.
+- **Exactly one owner,** appointed by you in the Supabase dashboard (§3). Nobody can change a role or status from the app or the API.
+- **Permissions:** members can do everything except **delete clients** and **manage the team** (owner only).
+- **Notifications** are team-wide, with read state per person.
+- **Storage cleanup** may remove an unreferenced file in any approved member's folder (still exact paths only, re-checked against every reference). Files of pending or unknown accounts are never touched.
+- Share links work as before.
+
+| | File |
+|---|---|
+| Migration | `supabase/migrations/0010_team_workspace.sql` |
+| Verify | `supabase/verify/0010_verify.sql` (safe on production: everything is rolled back) |
+| Rollback | `supabase/rollback/0010_rollback.sql` (outside `migrations/`) |
+
+## 0. Before you start
+
+1. **Let CI pass** on `feature/owner-approval`. Its **live** job applies 0001–0010 with the real Supabase CLI, runs every verify script, and runs the live end-to-end tests (signup → waiting screen → approval, reject, member permissions, team Storage cleanup).
+2. **Check 0009 is applied** (read-only; expect 1 row):
+   ```sql
+   select 1 from information_schema.columns
+   where table_schema = 'public' and table_name = 'posts' and column_name = 'scheduled_day';
+   ```
+3. **See whose data gets merged** (read-only). After 0010 every account on this list sees all of these clients:
+   ```sql
+   select p.email, count(c.id) as clients
+   from public.profiles p left join public.clients c on c.owner_id = p.id
+   group by p.email order by clients desc, p.email;
+   ```
+   If an account on that list shouldn't see the team's clients, delete it (Authentication → Users) **before** applying 0010, or right after.
+4. **Decide who the owner is** (their sign-in email). You appoint them right after the migration (§2 step 4).
+5. **Vercel env vars and Site URL:** unchanged from the previous release (see [§0 below](#0-before-you-start-1)). `SUPABASE_SERVICE_ROLE_KEY` is still not used by the app and must not be on Vercel: rejecting an account runs in Postgres (`reject_member`), not with a service key.
+6. **The gap.** Between applying 0010 and promoting the new deployment (seconds with §2), the old app against the new database: marking notifications read doesn't stick, and a few owner actions may show an error toast. Nothing is lost; retry after the promote.
+
+## 1. Back up
+
+As in the [previous release's §1](#1-back-up-1), with a new file name:
+
+```bash
+pg_dump "postgresql://postgres.<project-ref>:<password>@<host>:5432/postgres" \
+  --schema=public --table=storage.buckets \
+  --format=custom --file=gridline-before-0010.dump
+```
+
+0010 also replaces policies on `storage.objects` and adds a trigger on `auth.users`. Both are restored by the rollback script; uploaded files aren't changed.
+
+## 2. Deploy — exact order
+
+Same procedure as last time (staged production deployment, then an instant promote):
+
+1. **Vercel → Settings → Environments → Production → Branch Tracking:** turn **off** "Auto-assign Custom Production Domains".
+2. **Merge and push:**
+   ```bash
+   git checkout main
+   git merge feature/owner-approval
+   git push
+   ```
+   Vercel builds a **Staged** production deployment. Wait for **Ready**, then open its own URL at `/login`: **no** "Continue in demo mode" button (live-mode build).
+3. **Apply 0010:**
+   ```bash
+   psql "<connection string>" -v ON_ERROR_STOP=1 -f supabase/migrations/0010_team_workspace.sql
+   ```
+   Or paste the file into the **SQL editor** and run it. It must end with `COMMIT` and no error. If it fails, it applied nothing: **don't promote**; the old app keeps working.
+4. **Appoint the owner** right away (§3). Until then nobody can open the Team page or delete clients, and new sign-ups simply wait.
+5. **Promote** the staged deployment: Deployments → the staged deployment → **⋯** → **Promote** (or `vercel promote <deployment-url>`). It's instant.
+6. **Turn "Auto-assign Custom Production Domains" back on.**
+7. **Verify** (§4), then smoke test in a private window:
+   - Sign in as the owner: the sidebar shows **Team**, and clients from every account are listed.
+   - Sign up with a new address: after confirming, it shows the waiting screen. The owner's bell shows "… is waiting for approval". Approve it on **Team**, then press **Check again** in the new account.
+   - Sign in as a member: no Team item, and no **Delete client** in the client menus.
+
+If an RPC reports "function … does not exist" right after applying: `notify pgrst, 'reload schema';`
+
+## 3. Appointing the owner
+
+The owner is chosen only in the Supabase dashboard. The app and the API can't change roles. Dashboard roles aren't affected by the guard, which blocks only the app's API roles.
+
+**Table Editor:** *Table Editor* → `profiles` → the owner's row → set `role` to `owner` (their `status` is already `approved`) → *Save*.
+
+**Or SQL editor:**
+```sql
+update public.profiles set role = 'owner' where email = 'owner@example.com';
+```
+
+**Changing the owner later:** there can be only one, so demote the old one first, in the same run:
+```sql
+update public.profiles set role = 'member' where role = 'owner';
+update public.profiles set role = 'owner' where email = 'new.owner@example.com';
+```
+
+Errors you might see:
+- `duplicate key value violates unique constraint "profiles_single_owner"`: another account is still the owner. Demote it first.
+- `violates check constraint "profiles_owner_is_approved"`: that account is still pending. Approve it at the same time: `update public.profiles set role = 'owner', status = 'approved', approved_at = now() where email = '…';`
+
+Check who's who (read-only):
+```sql
+select email, role, status, email_confirmed, created_at, approved_at
+from public.profiles order by role desc, status, created_at;
+```
+
+## 4. Verify
+
+```bash
+psql "<connection string>" -v ON_ERROR_STOP=1 -f supabase/verify/0010_verify.sql
+```
+
+It prints `PASS 1` … `PASS 11` and ends with `ALL 0010 CHECKS PASSED — rolling back, nothing was saved`. A broken rule stops with `ERROR: FAIL n: …`.
+
+- **Safe on production:** it creates its own `verify-0010-…@example.invalid` accounts and data inside a transaction it rolls back. Inside that transaction it temporarily demotes your real owner (to test owner rules with its own); the rollback restores it.
+- You can still run `0006`–`0009_verify.sql`; they approve their own test accounts when 0010 is present.
+
+| # | Rule checked |
+|---|---|
+| 1 | New accounts start as pending members; the owner gets one sign-up notification each |
+| 2 | At most one owner, and the owner is always approved |
+| 3 | A pending account reads only its own profile and creates nothing |
+| 4 | API callers can't change role/status, even with spoofed JWT claims or headers |
+| 4b | The guard trigger alone also blocks it (tested with a temporary extra grant) |
+| 5 | Members see, edit and duplicate team clients; deleting a client is refused |
+| 6 | Members can't approve/reject or see sign-up notifications |
+| 7 | Share links still work; team notifications reach every member; read state is per person |
+| 8 | The owner sees pending accounts and approves them |
+| 9 | Reject removes the auth user, profile and sign-up notice; approved accounts can't be rejected |
+| 10 | Storage deletes are allowed only in approved members' folders |
+| 11 | `anon` can't approve/reject; definer functions keep `search_path = ''`; the guard is SECURITY INVOKER |
+
+## 5. What changes for users
+
+- **Everyone approved shares one workspace.** Existing accounts keep working and now see each other's clients.
+- **New sign-ups wait** for the owner's approval and see only the waiting screen until then.
+- **Owner only:** the Team page (approve/reject) and deleting clients. Members don't see those buttons, and the database refuses them anyway.
+- **Notifications** reach the whole team. Marking one read only affects you. Sign-up notices go to the owner only and open the Team page.
+- The sidebar shows your name and whether you're the owner or a member.
+
+## 6. Roll back
+
+1. Run `supabase/rollback/0010_rollback.sql` (one transaction). It restores the exact 0009 state.
+2. **Immediately** Instant Rollback the app in Vercel to the pre-deploy production deployment (the 0010 app calls functions the rollback drops).
+3. CLI migration history only: `supabase migration repair --status reverted 0010`.
+
+**After a rollback:**
+- Each account again sees only the clients it created (clients made by members stay with whoever created them).
+- Roles, approval status and sign-up notifications are dropped. Pending accounts become ordinary accounts, so delete any you don't want (Authentication → Users).
+- Read state survives only for each notification's original recipient.
+
+## 7. Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Owner sees no **Team** item | No owner appointed yet, or the wrong row: §3 |
+| An existing user sees the waiting screen | Their profile is `pending`. The migration approves everyone who existed when it ran, so this is an account created afterwards: approve it on Team |
+| `profiles_single_owner` / `profiles_owner_is_approved` error | §3 |
+| "Only the workspace owner can delete clients." | Intended for members |
+| `role_change_not_allowed` | Something tried to change a role/status through the API. Intended; use the dashboard (§3) |
+| `function public.approve_member(...) does not exist` | 0010 not applied, or stale cache: `notify pgrst, 'reload schema';` |
+
+---
+
+# Previous release — migrations 0006 → 0009 (applied)
+
+> **Status: applied in production** (deployed together with the `audit-fixes` app). The steps below are kept for reference and for rolling back. The CI and test notes describe that release.
 
 ## What ships
 

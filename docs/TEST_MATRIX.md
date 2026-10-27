@@ -79,10 +79,13 @@ The table above is the July 2026 matrix. These areas were added with the audit f
 | Error states: load failure + Retry, refresh notice, failed save toast | `16-error-handling` | ✅ | ➖ |
 | Ordered refreshes, local patches (UI matches after reload) | unit `store-ordering`, `18-patched-mutations` | ✅ | ➖ |
 | Open-redirect protection on `?next=` | `01-auth`, unit `redirect` | ✅ | ➖ |
-| Signup with email confirmation ("Check your inbox") | `tests/live` | ➖ | CI |
+| Signup with email confirmation ("Check your inbox") → waiting for approval | `tests/live` | ➖ | CI |
+| Team workspace: approve / reject, member can't delete clients, waiting screen, demo preview | `22-team`, unit `demo-repository`, `tests/live`, SQL verify 0010 | ✅ | ✅ / CI |
+| Pending account sees nothing and can't change its role/status over PostgREST | SQL verify 0010 (checks 3, 4, 4b), `tests/live` | ➖ | ✅ / CI |
+| Team Storage cleanup (teammate's unreferenced file removed; outsiders' files kept) | `tests/live`, SQL verify 0010 check 10 | ➖ | ✅ / CI |
 | Top-bar search (⌘K/Ctrl+K, mobile), settings defaults, hydration-safe storage | `19-search-defaults` | ✅ | ➖ |
 | Timezone-free content days (Auckland → Los Angeles), old-data repair | `20-content-days`, SQL verify 0009 | ✅ | CI |
-| Migrations 0006–0009: verify, rollback chain, atomicity | `npm run test:sql`; CI runs verify on real Supabase | ➖ | ✅ / CI |
+| Migrations 0006–0010: verify, rollback chain, atomicity | `npm run test:sql`; CI runs verify on real Supabase | ➖ | ✅ / CI |
 
 "CI" = the GitHub Actions **live** job against a local Supabase (`supabase start`). It has
 not run yet, because the branch hasn't been pushed.

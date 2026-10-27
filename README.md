@@ -2,7 +2,7 @@
 
 Plan, preview and approve Instagram content with your clients before it goes live.
 
-Build a realistic copy of a client's Instagram profile: bio, avatar, highlights, and a 3-column grid of posts, carousels and reels. Arrange the grid, schedule posts on a calendar, then send the client a public **share link**. They review the feed exactly as it will look, then comment, approve or request changes without an account. You get an in-app notification when they respond. The app does **not** publish to Instagram.
+Build a realistic copy of a client's Instagram profile: bio, avatar, highlights, and a 3-column grid of posts, carousels and reels. Arrange the grid, schedule posts on a calendar, then send the client a public **share link**. They review the feed exactly as it will look, then comment, approve or request changes without an account. Your team gets an in-app notification when they respond. The app does **not** publish to Instagram.
 
 ## Two modes
 
@@ -42,11 +42,38 @@ On Vercel, set the two public variables for **every environment that builds**: P
 1. Create a Supabase project.
 2. Apply the migrations in `supabase/migrations/` **in order** (SQL editor, `psql`, or `supabase db push`). Each later migration builds on the previous ones.
    - `0001`–`0005`: schema, RLS, storage buckets, content stage, video covers, review notifications.
-   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days. Read [`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md) first: they must be deployed **together with the matching app version**, and the guide gives the backup, staged Vercel deploy, verification and rollback steps.
+   - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days.
+   - `0010`: the team workspace with owner approval (see [Team and roles](#team-and-roles)).
+   - Read [`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md) first. Migrations from `0006` on must be deployed **together with the matching app version**; the guide gives the backup, staged Vercel deploy, verification and rollback steps.
 3. Check each applied migration with its script in `supabase/verify/`. They are safe on production: everything is rolled back. Rollback scripts live in `supabase/rollback/`, deliberately outside `migrations/`.
 4. In Supabase → Authentication → URL Configuration, set the **Site URL** to your deployment URL, so confirmation emails link back to the app.
+5. Appoint the workspace owner (next section).
 
 There is no seed data for live mode; the sample clients exist only in demo mode.
+
+## Team and roles
+
+Live mode is **one shared team workspace**: every approved account works on the same clients, posts, calendar, share links and notifications.
+
+| | Owner (exactly one) | Member | Pending (new sign-up) |
+|---|---|---|---|
+| Clients, posts, calendar, share links | ✓ | ✓ | – |
+| Delete clients | ✓ | – | – |
+| **Team** page: approve / reject sign-ups | ✓ | – | – |
+| Sees | everything + sign-up notices | everything | only the "waiting for approval" screen |
+
+- **New sign-ups start pending.** The owner gets a notification and approves or rejects them on **Team**. Reject deletes the account (it can sign up again).
+- **Roles are changed only in the Supabase dashboard,** never in the app or through the API. The database refuses role/status changes from API requests (privileges plus a guard trigger).
+- **Appoint the owner:** *Table Editor* → `profiles` → the person's row → `role` = `owner` → *Save*. Or in the SQL editor:
+  ```sql
+  update public.profiles set role = 'owner' where email = 'owner@example.com';
+  ```
+  There can be only one owner. To hand over, demote the current one first, in the same run:
+  ```sql
+  update public.profiles set role = 'member' where role = 'owner';
+  update public.profiles set role = 'owner' where email = 'new.owner@example.com';
+  ```
+- **Demo mode** plays the owner, with a seeded team (one member, two pending sign-ups). To see what a new account sees, use **Preview what a new account sees** on `/login`.
 
 ## Tests
 
@@ -79,7 +106,7 @@ tests/e2e/            Playwright specs + fixture assets
 docs/                 User manual, routes, known issues, migration guides, QA reports
 ```
 
-All data access goes through the `Repository` interface, so any change to it must be made in **both** the demo and Supabase implementations.
+All data access goes through the `Repository` interface, so any change to it must be made in **both** the demo and Supabase implementations (including the team rules: owner-only actions, pending accounts).
 
 ## Documentation
 
