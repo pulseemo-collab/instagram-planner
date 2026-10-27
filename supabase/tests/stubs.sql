@@ -15,7 +15,10 @@ exception when duplicate_object then null;
 end $$;
 
 create schema auth;
-create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
+create table auth.users (
+  id uuid primary key, email text, raw_user_meta_data jsonb default '{}',
+  email_confirmed_at timestamptz  -- set when the email is confirmed (Supabase Auth)
+);
 -- Same lookup as Supabase's auth.uid(): the JWT "sub" claim.
 create function auth.uid() returns uuid language sql stable as $$
   select coalesce(

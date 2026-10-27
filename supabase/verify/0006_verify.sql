@@ -20,6 +20,18 @@ begin;
 
 insert into auth.users (id, email)
   values ('00060000-0000-4000-8000-00000000000a', 'verify-0006-owner@example.invalid');
+
+-- From 0010 on, new accounts start PENDING; approve this script's owner so
+-- its checks run as an approved team member. Other fixture users stay
+-- pending ("another, non-member user"). A no-op before 0010.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'profiles' and column_name = 'status') then
+    execute 'update public.profiles set status = ''approved'' where id = $1'
+      using '00060000-0000-4000-8000-00000000000a'::uuid;
+  end if;
+end $$;
 -- The profile row is created by the on_auth_user_created trigger.
 
 insert into public.clients (id, owner_id, name, slug, instagram_username) values

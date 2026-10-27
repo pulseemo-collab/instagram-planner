@@ -16,6 +16,18 @@ insert into auth.users (id, email) values
   ('00080000-0000-4000-8000-00000000000a', 'verify-0008-owner@example.invalid'),
   ('00080000-0000-4000-8000-00000000000b', 'verify-0008-stranger@example.invalid');
 
+-- From 0010 on, new accounts start PENDING; approve this script's owner so
+-- its checks run as an approved team member. Other fixture users stay
+-- pending ("another, non-member user"). A no-op before 0010.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'profiles' and column_name = 'status') then
+    execute 'update public.profiles set status = ''approved'' where id = $1'
+      using '00080000-0000-4000-8000-00000000000a'::uuid;
+  end if;
+end $$;
+
 insert into public.clients (id, owner_id, name, slug, instagram_username, bio, theme, followers_count) values
   ('00080000-0000-4000-8000-0000000000c1', '00080000-0000-4000-8000-00000000000a',
    'Dup Source', 'dup-source', 'dup_source', 'Bio line', 'dark', 4200),
