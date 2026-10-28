@@ -4,21 +4,18 @@ import { enterDemo, evidence } from "./helpers";
 test.describe("Shared previews page", () => {
   test("lists links with status, counts, and working actions", async ({ page }) => {
     await enterDemo(page, "/previews");
-    // Seed: 2 active links + 1 disabled.
-    await expect(page.getByText("Active")).toHaveCount(2);
-    await expect(page.getByText("Disabled")).toHaveCount(1);
+    // Seed: 2 active links shown directly; the disabled one is in Kavo's archive.
+    const cards = page.getByTestId("share-link-card");
+    await expect(cards.filter({ visible: true })).toHaveCount(2);
+    await expect(cards.filter({ visible: true }).filter({ hasText: "Active" })).toHaveCount(2);
     await expect(page.locator("body")).toContainText(/\d+ comments?/);
     await expect(page.locator("body")).toContainText(/\d+\/\d+ approved/);
     await evidence(page, "sharing", "previews-page");
 
-    // Disable an active link (scope to a single link card, not an ancestor).
-    const aurelleCard = page
-      .locator("div.rounded-xl")
-      .filter({ hasText: "Maison Aurelle" })
-      .first();
-    await aurelleCard.getByRole("button", { name: "Disable" }).click();
+    const aurelle = page.getByRole("region", { name: "Maison Aurelle" });
+    await aurelle.getByRole("button", { name: "Disable" }).click();
     await expect(page.locator("body")).toContainText("Link disabled");
-    await expect(page.getByText("Disabled")).toHaveCount(2);
+    await expect(cards.filter({ visible: true })).toHaveCount(1);
 
     // Regenerate a token.
     await page.getByRole("button", { name: "Regenerate token" }).first().click();

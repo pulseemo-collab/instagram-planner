@@ -50,3 +50,11 @@ export const userRenamed: SnapshotPatch<User> = (snapshot, user) => ({
   ...snapshot,
   user: { ...snapshot.user, displayName: user.displayName, updatedAt: user.updatedAt },
 });
+
+/** A deleted share link (nothing else in the snapshot changes). */
+export function shareLinkDeleted(id: string): SnapshotPatch<unknown> {
+  return (snapshot) => ({
+    ...snapshot,
+    shareLinks: snapshot.shareLinks.filter((l) => l.id !== id),
+  });
+}

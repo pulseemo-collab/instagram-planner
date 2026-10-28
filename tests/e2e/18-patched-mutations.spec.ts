@@ -85,9 +85,13 @@ test.describe("Locally patched mutations", () => {
     await expect(main).toContainText("demo-norr-ostermalm");
 
     // The Norr link's card (found by token, so only used before regenerating).
-    const card = main.locator("div.rounded-xl").filter({ hasText: "/share/demo-norr-ostermalm" });
+    const card = main.getByTestId("share-link-card").filter({ hasText: "/share/demo-norr-ostermalm" });
     await card.getByRole("button", { name: "Disable" }).click();
     await expect(page.locator("body")).toContainText("Link disabled");
+    // A disabled link moves to the client's collapsed archive.
+    const openArchive = () =>
+      page.getByRole("region", { name: "Studio Norr" }).getByText("Archive (1)").click();
+    await openArchive();
     await expect(card.getByRole("button", { name: "Enable" })).toBeVisible();
 
     await card.getByRole("button", { name: "Regenerate token" }).click();
@@ -97,6 +101,8 @@ test.describe("Locally patched mutations", () => {
 
     await page.reload();
     await expect(main).not.toContainText("demo-norr-ostermalm");
+    await openArchive();
+    await expect(page.getByRole("region", { name: "Studio Norr" }).getByRole("button", { name: "Enable" })).toBeVisible();
     expect(await main.innerText()).toBe(texts);
   });
 

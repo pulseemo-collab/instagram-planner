@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { notificationsRead, shareLinkCreated, shareLinkSaved, userRenamed } from "@/lib/store/patches";
+import {
+  notificationsRead,
+  shareLinkCreated,
+  shareLinkDeleted,
+  shareLinkSaved,
+  userRenamed,
+} from "@/lib/store/patches";
 import type { Activity, AppNotification, ShareLink } from "@/types/domain";
 import { makeSnapshot } from "./fixtures";
 
@@ -45,6 +51,12 @@ describe("snapshot patches", () => {
     expect(shareLinkSaved(snapshot, link("l1", "new", false)).shareLinks).toEqual([link("l1", "new", false)]);
     expect(shareLinkSaved(snapshot, link("l2", "x")).shareLinks.map((l) => l.id)).toEqual(["l1", "l2"]);
     expect(snapshot.shareLinks).toEqual([link("l1", "old")]);
+  });
+
+  it("removes a deleted share link without mutating input", () => {
+    const snapshot = makeSnapshot({ shareLinks: [link("l1", "a"), link("l2", "b")] });
+    expect(shareLinkDeleted("l1")(snapshot, undefined).shareLinks.map((l) => l.id)).toEqual(["l2"]);
+    expect(snapshot.shareLinks).toHaveLength(2);
   });
 
   it("adds a created link and prepends its activity entry, capped at 200", () => {
