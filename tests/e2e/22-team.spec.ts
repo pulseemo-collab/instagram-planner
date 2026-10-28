@@ -7,9 +7,12 @@ import { enterDemo } from "./helpers";
  */
 
 /** Change the stored demo workspace's user, then reload (another tab's write). */
-async function setStoredRole(page: Page, role: "owner" | "member"): Promise<void> {
+async function setStoredUser(
+  page: Page,
+  patch: { role?: "owner" | "member"; status?: "approved" | "suspended" },
+): Promise<void> {
   await page.evaluate(
-    (nextRole) =>
+    (userPatch) =>
       new Promise<void>((resolve, reject) => {
         const open = indexedDB.open("gridline-studio", 1);
         open.onsuccess = () => {
@@ -18,7 +21,7 @@ async function setStoredRole(page: Page, role: "owner" | "member"): Promise<void
           const rq = store.get("workspace-v1");
           rq.onsuccess = () => {
             const state = rq.result;
-            state.user.role = nextRole;
+            Object.assign(state.user, userPatch);
             const put = store.put(state, "workspace-v1");
             put.onsuccess = () => {
               db.close();
@@ -30,13 +33,14 @@ async function setStoredRole(page: Page, role: "owner" | "member"): Promise<void
         };
         open.onerror = () => reject(open.error);
       }),
-    role,
+    patch,
   );
   await page.reload();
 }
 
 const pendingSection = (page: Page) => page.getByRole("region", { name: "Waiting for approval" });
 const membersSection = (page: Page) => page.getByRole("region", { name: "Members" });
+const suspendedSection = (page: Page) => page.getByRole("region", { name: "Suspended" });
 
 test.describe("Team workspace", () => {
   test("the owner approves a pending account; it stays approved after reload", async ({ page }) => {
@@ -76,6 +80,69 @@ test.describe("Team workspace", () => {
     await expect(page.locator("main")).not.toContainText("Théo Marchand");
   });
 
+  test("suspend asks first, moves the member to Suspended; restore brings them back", async ({ page }) => {
+    await enterDemo(page, "/team");
+    // Never on the owner's own row.
+    const ownerRow = membersSection(page).getByRole("listitem").filter({ hasText: "Owner" });
+    await expect(ownerRow.getByRole("button")).toHaveCount(0);
+    await expect(suspendedSection(page)).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Suspend Sam Rivera" }).click();
+    const suspend = page.getByRole("dialog", { name: "Suspend Sam Rivera?" });
+    await expect(suspend).toContainText("account is kept");
+    await suspend.getByRole("button", { name: "Cancel" }).click();
+    await expect(membersSection(page)).toContainText("Sam Rivera");
+
+    await page.getByRole("button", { name: "Suspend Sam Rivera" }).click();
+    await suspend.getByRole("button", { name: "Suspend" }).click();
+    await expect(page.locator("body")).toContainText("Sam Rivera was suspended");
+    await expect(suspendedSection(page)).toContainText("Sam Rivera");
+    await expect(membersSection(page)).not.toContainText("Sam Rivera");
+
+    await page.reload();
+    await expect(suspendedSection(page)).toContainText("Sam Rivera");
+    await page.getByRole("button", { name: "Restore Sam Rivera" }).click();
+    await page.getByRole("dialog", { name: "Restore Sam Rivera?" }).getByRole("button", { name: "Restore access" }).click();
+    await expect(page.locator("body")).toContainText("Sam Rivera can use the workspace again");
+    await expect(membersSection(page)).toContainText("Sam Rivera");
+    await expect(suspendedSection(page)).toHaveCount(0);
+  });
+
+  test("remove asks first, then deletes the member; their clients stay", async ({ page }) => {
+    await enterDemo(page, "/team");
+    await page.getByRole("button", { name: "Remove Sam Rivera" }).click();
+    const dialog = page.getByRole("dialog", { name: "Remove Sam Rivera?" });
+    await expect(dialog).toContainText("The clients they created move to you");
+    await dialog.getByRole("button", { name: "Remove and delete account" }).click();
+    await expect(page.locator("body")).toContainText("Sam Rivera was removed from the team");
+    await expect(page.locator("main")).not.toContainText("Sam Rivera");
+
+    await page.reload();
+    await expect(page.locator("main")).not.toContainText("Sam Rivera");
+    await page.goto("/clients");
+    await expect(page.locator("main")).toContainText("Kavo");
+  });
+
+  test("a suspended account sees only the suspended screen", async ({ page }) => {
+    await enterDemo(page, "/clients");
+    await setStoredUser(page, { role: "member", status: "suspended" });
+    await expect(page.getByRole("heading", { name: "Your access was suspended" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText("Kavo");
+  });
+
+  test("approving resolves the sign-up notification", async ({ page }) => {
+    await enterDemo(page, "/team");
+    await page.getByRole("button", { name: "Approve Maya Lindqvist" }).click();
+    await page.getByRole("dialog", { name: "Approve Maya Lindqvist?" }).getByRole("button", { name: "Approve" }).click();
+    await expect(page.locator("body")).toContainText("Maya Lindqvist can now use the workspace");
+    await page.reload();
+    await page.getByRole("button", { name: /Notifications/ }).click();
+    const panel = page.getByRole("dialog", { name: "Notifications" });
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toContainText("Maya Lindqvist is waiting for approval");
+  });
+
   test("a sign-up notification opens the Team page", async ({ page }) => {
     await enterDemo(page, "/");
     await page.getByRole("button", { name: /Notifications/ }).click();
@@ -88,7 +155,7 @@ test.describe("Team workspace", () => {
 
   test("a member has no Team page and can't delete clients", async ({ page }) => {
     await enterDemo(page, "/clients");
-    await setStoredRole(page, "member");
+    await setStoredUser(page, { role: "member" });
     const nav = page.getByRole("navigation", { name: "Main navigation" });
     await expect(nav.getByRole("link", { name: "Clients" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Team" })).toHaveCount(0);

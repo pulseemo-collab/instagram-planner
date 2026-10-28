@@ -91,8 +91,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
   }, [mobileNavOpen, closeMobileNav]);
 
-  // Not approved yet: no sidebar, no pages — only the waiting screen.
-  if (snapshot?.user.status === "pending") return <PendingApprovalScreen user={snapshot.user} />;
+  // Pending or suspended: no sidebar, no pages — only the waiting screen.
+  if (snapshot && snapshot.user.status !== "approved") return <PendingApprovalScreen user={snapshot.user} />;
 
   return (
     <div className="flex min-h-dvh">

@@ -303,6 +303,88 @@ describe("DemoRepository: team workspace", () => {
     await expect(repo.rejectMember("user-pending-1")).rejects.toThrow(TEAM_ERRORS.notOwner);
   });
 
+  it("approving resolves the sign-up notice for everyone", async () => {
+    const repo = newRepo();
+    await repo.approveMember("user-pending-1");
+    expect((await repo.loadSnapshot()).notifications.some((n) => n.subjectUserId === "user-pending-1")).toBe(false);
+  });
+
+  it("suspend keeps the account; restore lets it back in", async () => {
+    const repo = newRepo();
+    await repo.suspendMember("user-sam");
+    let sam = (await newRepo().listTeam()).find((m) => m.id === "user-sam")!;
+    expect(sam.status).toBe("suspended");
+    // Suspended accounts are listed last.
+    expect((await repo.listTeam()).at(-1)?.id).toBe("user-sam");
+    await expect(repo.suspendMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notMember);
+
+    await repo.restoreMember("user-sam");
+    sam = (await newRepo().listTeam()).find((m) => m.id === "user-sam")!;
+    expect(sam.status).toBe("approved");
+    expect(sam.approvedAt).not.toBeNull();
+    await expect(repo.restoreMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notSuspended);
+  });
+
+  it("remove deletes the member and moves their clients to the owner", async () => {
+    await storeEdited((state) => {
+      state.clients.find((c) => c.id === "client-kavo")!.ownerId = "user-sam";
+    });
+    const repo = newRepo();
+    const { user } = await repo.loadSnapshot();
+    await repo.removeMember("user-sam");
+    expect((await repo.listTeam()).some((m) => m.id === "user-sam")).toBe(false);
+    const kavo = (await repo.loadSnapshot()).clients.find((c) => c.id === "client-kavo")!;
+    expect(kavo.ownerId).toBe(user.id);
+    // Suspended members can be removed too; pending ones are rejected instead.
+    await repo.approveMember("user-pending-1");
+    await repo.suspendMember("user-pending-1");
+    await repo.removeMember("user-pending-1");
+    await expect(repo.removeMember("user-pending-2")).rejects.toThrow(TEAM_ERRORS.notMember);
+  });
+
+  it("never acts on the owner, and members can't use the actions", async () => {
+    const repo = newRepo();
+    const { user } = await repo.loadSnapshot();
+    await expect(repo.suspendMember(user.id)).rejects.toThrow(TEAM_ERRORS.notSelf);
+    await expect(repo.removeMember(user.id)).rejects.toThrow(TEAM_ERRORS.notSelf);
+    await storeEdited((state) => {
+      state.user.role = "member";
+    });
+    const member = newRepo();
+    await expect(member.suspendMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notOwner);
+    await expect(member.restoreMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notOwner);
+    await expect(member.removeMember("user-sam")).rejects.toThrow(TEAM_ERRORS.notOwner);
+  });
+
+  it("marking read deletes read notifications older than 30 days", async () => {
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    await storeEdited((state) => {
+      state.notifications.push(
+        { ...state.notifications[0], id: "n-old-read", isRead: true, createdAt: old },
+        { ...state.notifications[0], id: "n-old-unread", isRead: false, createdAt: old },
+      );
+    });
+    const repo = newRepo();
+    const unread = (await repo.loadSnapshot()).notifications.find((n) => n.id === "n-1")!;
+    await repo.markNotificationRead(unread.id);
+    const ids = (await repo.loadSnapshot()).notifications.map((n) => n.id);
+    expect(ids).not.toContain("n-old-read");
+    expect(ids).toContain("n-old-unread"); // unread ones stay until read
+    expect(ids).toContain("n-1"); // recent read ones stay
+
+    await repo.markAllNotificationsRead();
+    expect((await repo.loadSnapshot()).notifications.map((n) => n.id)).not.toContain("n-old-unread");
+  });
+
+  it("deleting a share link makes its URL stop working", async () => {
+    const repo = newRepo();
+    expect(await repo.resolveShareToken("demo-norr-ostermalm")).not.toBe("not_found");
+    await repo.deleteShareLink("sl-2");
+    expect((await repo.loadSnapshot()).shareLinks.some((l) => l.id === "sl-2")).toBe(false);
+    expect(await repo.resolveShareToken("demo-norr-ostermalm")).toBe("not_found");
+    await expect(repo.deleteShareLink("sl-2")).rejects.toThrow("Share link not found");
+  });
+
   it("upgrades a workspace stored before the team workspace", async () => {
     await storeEdited((state) => {
       delete state.team;

@@ -33,7 +33,7 @@ import type {
   UploadResult,
   WorkspaceSnapshot,
 } from "./types";
-import { SHARE_RATE_LIMITS, TEAM_ERRORS } from "./types";
+import { SHARE_RATE_LIMITS, TEAM_ERRORS, teamOrder } from "./types";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const LOCAL_PREFIX = "local:";
@@ -240,6 +240,43 @@ function addNotification(
     createdAt: now(),
   });
   state.notifications = state.notifications.slice(0, 200);
+}
+
+/** Read notifications older than this are deleted (like migration 0011). */
+const READ_NOTIFICATION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function purgeReadNotifications(state: WorkspaceSnapshot): void {
+  const cutoff = Date.now() - READ_NOTIFICATION_TTL_MS;
+  state.notifications = state.notifications.filter(
+    (n) => !n.isRead || new Date(n.createdAt).getTime() >= cutoff,
+  );
+}
+
+/** An account that stopped being pending resolves its "waiting for approval" notice. */
+function resolveSignup(state: WorkspaceSnapshot, userId: string): void {
+  state.notifications = state.notifications.filter(
+    (n) => !(n.type === "member_signup" && n.subjectUserId === userId),
+  );
+}
+
+function requireOwner(state: DemoState): void {
+  if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
+}
+
+/** A member (never the owner or the caller) in one of the given states. */
+function findMember(
+  state: DemoState,
+  userId: string,
+  statuses: TeamMember["status"][],
+  notFound: string,
+): TeamMember {
+  requireOwner(state);
+  if (userId === state.user.id) throw new Error(TEAM_ERRORS.notSelf);
+  const member = state.team.find(
+    (m) => m.id === userId && m.role === "member" && statuses.includes(m.status),
+  );
+  if (!member) throw new Error(notFound);
+  return member;
 }
 
 function findValidShare(state: WorkspaceSnapshot, token: string): ShareLink | ShareError {
@@ -673,6 +710,14 @@ export class DemoRepository implements Repository {
     return this.updateShareLink(id, { token: createToken() });
   }
 
+  async deleteShareLink(id: string): Promise<void> {
+    await this.write((state) => {
+      if (!state.shareLinks.some((s) => s.id === id)) throw new Error("Share link not found");
+      state.shareLinks = state.shareLinks.filter((s) => s.id !== id);
+    });
+    this.shareSubmissions.delete(id);
+  }
+
   async recordActivity(input: Omit<Activity, "id" | "createdAt">): Promise<Activity> {
     return this.write((state) => structuredClone(addActivity(state, input)));
   }
@@ -683,6 +728,7 @@ export class DemoRepository implements Repository {
     await this.write((state) => {
       const notification = state.notifications.find((n) => n.id === id);
       if (notification) notification.isRead = true;
+      purgeReadNotifications(state);
     });
   }
 
@@ -691,6 +737,7 @@ export class DemoRepository implements Repository {
     if (!current.notifications.some((n) => !n.isRead)) return;
     await this.write((state) => {
       for (const notification of state.notifications) notification.isRead = true;
+      purgeReadNotifications(state);
     });
   }
 
@@ -698,32 +745,55 @@ export class DemoRepository implements Repository {
 
   async listTeam(): Promise<TeamMember[]> {
     const state = await this.read();
-    if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
-    const order = (m: TeamMember) => (m.status === "pending" ? 0 : 1);
+    requireOwner(state);
     return structuredClone(
-      [...state.team].sort((a, b) => order(a) - order(b) || b.createdAt.localeCompare(a.createdAt)),
+      [...state.team].sort(
+        (a, b) => teamOrder(a) - teamOrder(b) || b.createdAt.localeCompare(a.createdAt),
+      ),
     );
   }
 
   async approveMember(userId: string): Promise<void> {
     await this.write((state) => {
-      if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
-      const member = state.team.find((m) => m.id === userId && m.status === "pending");
-      if (!member) throw new Error(TEAM_ERRORS.notPending);
+      const member = findMember(state, userId, ["pending"], TEAM_ERRORS.notPending);
       member.status = "approved";
       member.approvedAt = now();
+      resolveSignup(state, userId);
     });
   }
 
   async rejectMember(userId: string): Promise<void> {
     await this.write((state) => {
-      if (state.user.role !== "owner") throw new Error(TEAM_ERRORS.notOwner);
-      if (!state.team.some((m) => m.id === userId && m.status === "pending")) {
-        throw new Error(TEAM_ERRORS.notPending);
-      }
+      findMember(state, userId, ["pending"], TEAM_ERRORS.notPending);
       // Like deleting the account: gone from the team, with its sign-up notice.
       state.team = state.team.filter((m) => m.id !== userId);
-      state.notifications = state.notifications.filter((n) => n.subjectUserId !== userId);
+      resolveSignup(state, userId);
+    });
+  }
+
+  async suspendMember(userId: string): Promise<void> {
+    await this.write((state) => {
+      findMember(state, userId, ["approved"], TEAM_ERRORS.notMember).status = "suspended";
+    });
+  }
+
+  async restoreMember(userId: string): Promise<void> {
+    await this.write((state) => {
+      const member = findMember(state, userId, ["suspended"], TEAM_ERRORS.notSuspended);
+      member.status = "approved";
+      member.approvedAt ??= now();
+    });
+  }
+
+  async removeMember(userId: string): Promise<void> {
+    await this.write((state) => {
+      findMember(state, userId, ["approved", "suspended"], TEAM_ERRORS.notMember);
+      // Like the 0011 delete trigger: their clients move to the owner.
+      for (const client of state.clients) {
+        if (client.ownerId === userId) client.ownerId = state.user.id;
+      }
+      state.team = state.team.filter((m) => m.id !== userId);
+      resolveSignup(state, userId);
     });
   }
 

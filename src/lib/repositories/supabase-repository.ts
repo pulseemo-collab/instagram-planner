@@ -18,6 +18,7 @@ import type {
 } from "@/types/domain";
 import {
   TEAM_ERRORS,
+  teamOrder,
   type Repository,
   type ShareError,
   type ShareResolution,
@@ -35,6 +36,11 @@ const asNum = (v: unknown): number => Number(v ?? 0);
 const asNumOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
 const asBool = (v: unknown): boolean => Boolean(v);
 
+/** Unknown values are treated as pending: no access. */
+function mapStatus(value: unknown): User["status"] {
+  return value === "approved" || value === "suspended" ? value : "pending";
+}
+
 function mapUser(row: Row): User {
   return {
     id: asStr(row.id),
@@ -42,7 +48,7 @@ function mapUser(row: Row): User {
     displayName: asStr(row.display_name),
     avatarUrl: asStrOrNull(row.avatar_url),
     role: row.role === "owner" ? "owner" : "member",
-    status: row.status === "approved" ? "approved" : "pending",
+    status: mapStatus(row.status),
     createdAt: asStr(row.created_at),
     updatedAt: asStr(row.updated_at),
   };
@@ -54,7 +60,7 @@ function mapTeamMember(row: Row): TeamMember {
     email: asStr(row.email),
     displayName: asStr(row.display_name),
     role: row.role === "owner" ? "owner" : "member",
-    status: row.status === "approved" ? "approved" : "pending",
+    status: mapStatus(row.status),
     emailConfirmed: asBool(row.email_confirmed),
     createdAt: asStr(row.created_at),
     approvedAt: asStrOrNull(row.approved_at),
@@ -270,14 +276,19 @@ function shareErrorFrom(error: { message: string }): ShareError | null {
   return SHARE_RPC_ERRORS[error.message] ?? null;
 }
 
-/** Error codes raised by the 0010 team RPCs, mapped to readable messages. */
-const TEAM_RPC_ERRORS: Record<string, string> = {
-  not_owner: TEAM_ERRORS.notOwner,
-  not_found: TEAM_ERRORS.notPending,
-};
-
-function throwTeamError(error: { message: string } | null): void {
-  if (error) throw new Error(TEAM_RPC_ERRORS[error.message] ?? error.message);
+/**
+ * Error codes raised by the 0010/0011 team RPCs, mapped to readable
+ * messages. `notFound` depends on the action (the account wasn't in the
+ * state that action needs).
+ */
+function throwTeamError(error: { message: string } | null, notFound: string): void {
+  if (!error) return;
+  const messages: Record<string, string> = {
+    not_owner: TEAM_ERRORS.notOwner,
+    not_allowed: TEAM_ERRORS.notSelf,
+    not_found: notFound,
+  };
+  throw new Error(messages[error.message] ?? error.message);
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -318,9 +329,10 @@ export class SupabaseRepository implements Repository {
    * that aren't saved in any row yet (e.g. in progress in another tab) are
    * never touched. A candidate is removed only if:
    * - it is one of this project's media-bucket URLs,
-   * - its path is inside an approved team member's folder (`<user id>/…`;
-   *   the team shares one workspace, so a member may clean up a file a
-   *   teammate uploaded — never a pending or unknown account's files),
+   * - its path is inside a team member's folder (`<user id>/…` of an
+   *   approved, suspended or removed member — migration 0011; the team
+   *   shares one workspace, so a member may clean up a file a teammate
+   *   uploaded — never a pending or unknown account's files),
    * - and, re-checked after the change, no row references it any more
    *   (files shared between rows, e.g. a duplicated client, stay).
    * Runs only after the database change succeeded; a failure here never fails
@@ -335,13 +347,11 @@ export class SupabaseRepository implements Repository {
         return UUID.test(folder) ? [{ url, folder }] : [];
       });
       if (!objects.length) return;
-      const team = await this.sb
-        .from("profiles")
-        .select("id")
-        .eq("status", "approved")
-        .in("id", [...new Set(objects.map((object) => object.folder))]);
+      const team = await this.sb.rpc("team_media_folders", {
+        p_folders: [...new Set(objects.map((object) => object.folder))],
+      });
       if (team.error) return;
-      const teamFolders = new Set(((team.data ?? []) as Row[]).map((row) => asStr(row.id)));
+      const teamFolders = new Set((team.data ?? []) as string[]);
       const urls = objects.filter((object) => teamFolders.has(object.folder)).map((object) => object.url);
       for (let start = 0; start < urls.length; start += 40) {
         const chunk = urls.slice(start, start + 40);
@@ -756,6 +766,13 @@ export class SupabaseRepository implements Repository {
     return this.updateShareLink(id, { token: createToken() });
   }
 
+  async deleteShareLink(id: string): Promise<void> {
+    // RLS turns a refused delete into "0 rows", so check something went.
+    const { data, error } = await this.sb.from("share_links").delete().eq("id", id).select("id");
+    throwIf(error);
+    if (!data?.length) throw new Error("Share link not found");
+  }
+
   async recordActivity(input: Omit<Activity, "id" | "createdAt">): Promise<Activity> {
     const { data, error } = await this.sb
       .from("activity")
@@ -789,19 +806,35 @@ export class SupabaseRepository implements Repository {
       .select("id, email, display_name, role, status, email_confirmed, created_at, approved_at")
       .order("created_at", { ascending: false });
     throwIf(error);
-    const order = (member: TeamMember) => (member.status === "pending" ? 0 : 1);
-    return ((data ?? []) as Row[]).map(mapTeamMember).sort((a, b) => order(a) - order(b));
+    return ((data ?? []) as Row[]).map(mapTeamMember).sort((a, b) => teamOrder(a) - teamOrder(b));
   }
 
   async approveMember(userId: string): Promise<void> {
     const { error } = await this.sb.rpc("approve_member", { p_user_id: userId });
-    throwTeamError(error);
+    throwTeamError(error, TEAM_ERRORS.notPending);
   }
 
   async rejectMember(userId: string): Promise<void> {
     // Deletes the auth account (migration 0010), so they can sign up again.
     const { error } = await this.sb.rpc("reject_member", { p_user_id: userId });
-    throwTeamError(error);
+    throwTeamError(error, TEAM_ERRORS.notPending);
+  }
+
+  async suspendMember(userId: string): Promise<void> {
+    const { error } = await this.sb.rpc("suspend_member", { p_user_id: userId });
+    throwTeamError(error, TEAM_ERRORS.notMember);
+  }
+
+  async restoreMember(userId: string): Promise<void> {
+    const { error } = await this.sb.rpc("restore_member", { p_user_id: userId });
+    throwTeamError(error, TEAM_ERRORS.notSuspended);
+  }
+
+  async removeMember(userId: string): Promise<void> {
+    // Deletes the auth account; the 0011 delete trigger moves their clients
+    // to the owner first.
+    const { error } = await this.sb.rpc("remove_member", { p_user_id: userId });
+    throwTeamError(error, TEAM_ERRORS.notMember);
   }
 
   async uploadFile(

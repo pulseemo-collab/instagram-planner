@@ -37,8 +37,11 @@ export type NotificationType =
 export type NotificationAudience = "team" | "owner";
 /** One owner for the whole platform; everyone else approved is a member. */
 export type UserRole = "owner" | "member";
-/** New accounts wait for the owner's approval before they see any data. */
-export type AccountStatus = "pending" | "approved";
+/**
+ * New accounts wait for the owner's approval before they see any data;
+ * suspended accounts are kept but see nothing until the owner restores them.
+ */
+export type AccountStatus = "pending" | "approved" | "suspended";
 export type ActivityType =
   | "client_created"
   | "client_updated"

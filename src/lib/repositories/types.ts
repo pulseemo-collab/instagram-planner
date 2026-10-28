@@ -99,18 +99,29 @@ export interface Repository {
   createShareLink(input: Omit<ShareLink, "id" | "token" | "createdAt">): Promise<ShareLink>;
   updateShareLink(id: string, patch: Partial<ShareLink>): Promise<ShareLink>;
   regenerateShareToken(id: string): Promise<ShareLink>;
+  /** Deletes the link: its URL stops working immediately. */
+  deleteShareLink(id: string): Promise<void>;
 
   recordActivity(input: Omit<Activity, "id" | "createdAt">): Promise<Activity>;
 
   markNotificationRead(id: string): Promise<void>;
   markAllNotificationsRead(): Promise<void>;
 
-  /** Owner only: every account, pending ones first. */
+  /** Owner only: every account, pending ones first, then members, then suspended. */
   listTeam(): Promise<TeamMember[]>;
   /** Owner only: let a pending account into the workspace. */
   approveMember(userId: string): Promise<void>;
   /** Owner only: delete a pending account completely (they can sign up again). */
   rejectMember(userId: string): Promise<void>;
+  /** Owner only: block an approved member (account kept; never the owner). */
+  suspendMember(userId: string): Promise<void>;
+  /** Owner only: give a suspended member access again. */
+  restoreMember(userId: string): Promise<void>;
+  /**
+   * Owner only: delete a member's account completely (never the owner). The
+   * clients they created move to the owner; nothing else of the team's is lost.
+   */
+  removeMember(userId: string): Promise<void>;
 
   /** Store a file, returning a persistent reference. Reports progress 0..1. */
   uploadFile(
@@ -158,4 +169,14 @@ export const TEAM_ERRORS = {
   notOwner: "Only the workspace owner can do this.",
   deleteClient: "Only the workspace owner can delete clients.",
   notPending: "That account is no longer waiting for approval.",
+  notMember: "That account is no longer an active team member.",
+  notSuspended: "That account is no longer suspended.",
+  notSelf: "You can't do this to your own account.",
 } as const;
+
+/** Team page order: pending sign-ups, then members (owner first), then suspended. */
+export function teamOrder(member: TeamMember): number {
+  if (member.status === "pending") return 0;
+  if (member.status === "suspended") return 3;
+  return member.role === "owner" ? 1 : 2;
+}
