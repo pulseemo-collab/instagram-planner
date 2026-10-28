@@ -139,17 +139,18 @@ test.describe("Team workspace", () => {
     await page.reload();
     await page.getByRole("button", { name: /Notifications/ }).click();
     const panel = page.getByRole("dialog", { name: "Notifications" });
-    await expect(panel).toBeVisible();
+    await panel.getByRole("button", { name: "All", exact: true }).click();
+    await expect(panel).toContainText("Camille Aurelle requested changes");
     await expect(panel).not.toContainText("Maya Lindqvist is waiting for approval");
   });
 
   test("a sign-up notification opens the Team page", async ({ page }) => {
     await enterDemo(page, "/");
     await page.getByRole("button", { name: /Notifications/ }).click();
-    await page
-      .getByRole("dialog", { name: "Notifications" })
-      .getByRole("button", { name: /Maya Lindqvist is waiting for approval/ })
-      .click();
+    const panel = page.getByRole("dialog", { name: "Notifications" });
+    // Already read in the seed, so it is under All.
+    await panel.getByRole("button", { name: "All", exact: true }).click();
+    await panel.getByRole("button", { name: /Maya Lindqvist is waiting for approval/ }).click();
     await expect(page).toHaveURL(/\/team$/);
   });
 

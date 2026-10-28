@@ -1,6 +1,7 @@
 import { demoSessionVariant } from "@/lib/auth/session";
 import { localDayKey } from "@/lib/dates";
 import { createId, createToken, slugify } from "@/lib/id";
+import { READ_NOTIFICATION_TTL_MS } from "@/lib/notifications";
 import {
   idbClearAll,
   idbDeleteMedia,
@@ -242,9 +243,7 @@ function addNotification(
   state.notifications = state.notifications.slice(0, 200);
 }
 
-/** Read notifications older than this are deleted (like migration 0011). */
-const READ_NOTIFICATION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
+/** Read notifications older than 30 days are deleted (like migration 0011). */
 function purgeReadNotifications(state: WorkspaceSnapshot): void {
   const cutoff = Date.now() - READ_NOTIFICATION_TTL_MS;
   state.notifications = state.notifications.filter(

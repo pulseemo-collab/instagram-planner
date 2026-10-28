@@ -167,14 +167,47 @@ test.describe("Client review notifications", () => {
     await bell(page).click();
     await panel(page).getByRole("button", { name: "Mark all as read" }).click();
     await expect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
-    // History is kept — items remain listed, just read.
-    await expect(
-      panel(page).getByRole("button", { name: /^Rita Reviewer requested changes/ }),
-    ).toHaveCount(1);
+    // The default list only shows unread ones, so it is empty now…
+    await expect(panel(page).getByRole("button", { name: /^Rita Reviewer requested changes/ })).toHaveCount(0);
+    await expect(panel(page)).toContainText("You're all caught up.");
+    // …and history is kept under All, without the unread dot.
+    await panel(page).getByRole("button", { name: "All", exact: true }).click();
+    const item = panel(page).getByRole("button", { name: /^Rita Reviewer requested changes/ });
+    await expect(item).toHaveCount(1);
+    await expect(item).not.toContainText("(unread)");
 
     // Read state also survives a reload.
     await page.reload();
     await expect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
+  });
+
+  test("clicking a notification marks it read and opens its post; Unread / All toggle", async ({
+    page,
+  }) => {
+    await enterDemo(page, "/");
+    await expect(page.getByRole("button", { name: "Notifications, 2 unread" })).toBeVisible();
+    await bell(page).click();
+    // Default: unread only. The seeded sign-up notice is already read.
+    await expect(panel(page).getByRole("button", { name: "Unread", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(panel(page)).not.toContainText("Maya Lindqvist is waiting for approval");
+
+    await panel(page).getByRole("button", { name: /^Jasper Vink requested changes/ }).click();
+    await expect(page).toHaveURL(/\/clients\/client-kavo\/posts\/post-k2\?focus=review/);
+    await expect(page.getByRole("button", { name: "Notifications, 1 unread" })).toBeVisible();
+
+    await bell(page).click();
+    await expect(panel(page).getByRole("button", { name: /^Jasper Vink requested changes/ })).toHaveCount(0);
+    await panel(page).getByRole("button", { name: "All", exact: true }).click();
+    const jasper = panel(page).getByRole("button", { name: /^Jasper Vink requested changes/ });
+    await expect(jasper).toHaveCount(1);
+    await expect(jasper).not.toContainText("(unread)");
+    await expect(panel(page)).toContainText("Maya Lindqvist is waiting for approval");
+
+    // Reopening starts on Unread again.
+    await page.keyboard.press("Escape");
+    await bell(page).click();
+    await expect(panel(page).getByRole("button", { name: "Unread", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(panel(page).getByRole("button", { name: /^Camille Aurelle requested changes/ })).toHaveCount(1);
   });
 
   test("resubmit after changes: back to pending review, history preserved", async ({ page }) => {

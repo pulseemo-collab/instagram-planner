@@ -6,6 +6,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Bell, BellOff, Check, CheckCheck } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/dates";
+import { visibleNotifications, type NotificationView } from "@/lib/notifications";
 import { onWorkspaceChange } from "@/lib/repositories/demo-channel";
 import { useAction, useWorkspace } from "@/lib/store/hooks";
 import { notificationsRead } from "@/lib/store/patches";
@@ -13,9 +14,10 @@ import { workspaceStore } from "@/lib/store/workspace-store";
 import type { AppNotification } from "@/types/domain";
 
 /**
- * Functional notification bell: unread badge, dropdown list, mark-read, and
- * live updates (Supabase Realtime in live mode, BroadcastChannel across tabs
- * in demo mode, plus refresh-on-focus as the universal fallback).
+ * Functional notification bell: unread badge, dropdown list (unread only by
+ * default, "All" shows read ones too), mark-read, and live updates (Supabase
+ * Realtime in live mode, BroadcastChannel across tabs in demo mode, plus
+ * refresh-on-focus as the universal fallback).
  */
 export function NotificationBell() {
   const { status, snapshot, mode } = useWorkspace();
@@ -23,20 +25,16 @@ export function NotificationBell() {
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<NotificationView>("unread");
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const userId = snapshot?.user.id ?? null;
 
-  const notifications = useMemo(
-    () =>
-      (snapshot?.notifications ?? [])
-        .slice()
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [snapshot],
-  );
-  const unread = notifications.filter((n) => !n.isRead).length;
+  const all = useMemo(() => snapshot?.notifications ?? [], [snapshot]);
+  const notifications = useMemo(() => visibleNotifications(all, view), [all, view]);
+  const unread = all.filter((n) => !n.isRead).length;
   const clientName = (clientId: string | null) =>
     (clientId && snapshot?.clients.find((c) => c.id === clientId)?.name) || "Team";
 
@@ -64,6 +62,13 @@ export function NotificationBell() {
               // No filter: notifications are team-wide, and Realtime only
               // delivers the rows RLS lets this user read.
             },
+            () => void workspaceStore.refreshSoon(),
+          )
+          // Resolved sign-up notices and the 30-day purge delete rows
+          // (migration 0011); a delete only carries the id, so just refresh.
+          .on(
+            "postgres_changes",
+            { event: "DELETE", schema: "public", table: "notifications" },
             () => void workspaceStore.refreshSoon(),
           )
           .subscribe();
@@ -142,7 +147,11 @@ export function NotificationBell() {
         aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
         aria-expanded={open}
         aria-haspopup="dialog"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          // Every time the panel opens it starts on the unread list.
+          if (!open) setView("unread");
+          setOpen((value) => !value);
+        }}
         className="relative flex size-9 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-panel hover:text-ink"
       >
         <Bell className="size-[18px]" aria-hidden="true" />
@@ -169,19 +178,38 @@ export function NotificationBell() {
             {unread > 0 && (
               <span className="text-[11.5px] text-ink-faint">{unread} unread</span>
             )}
-            {notifications.length > 0 && (
+            {unread > 0 && (
               <button
                 type="button"
                 onClick={() =>
                   void run((repo) => repo.markAllNotificationsRead(), notificationsRead("all"))
                 }
-                disabled={unread === 0}
-                className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11.5px] font-medium text-ink-soft hover:text-ink disabled:opacity-40"
+                className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11.5px] font-medium text-ink-soft hover:text-ink"
               >
                 <CheckCheck className="size-3.5" aria-hidden="true" />
                 Mark all as read
               </button>
             )}
+          </div>
+          <div
+            role="group"
+            aria-label="Show notifications"
+            className="flex gap-1 border-b border-line px-3.5 py-1.5"
+          >
+            {(["unread", "all"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={view === option}
+                onClick={() => setView(option)}
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                  view === option ? "bg-panel-raised text-ink" : "text-ink-faint hover:text-ink",
+                )}
+              >
+                {option === "unread" ? "Unread" : "All"}
+              </button>
+            ))}
           </div>
 
           <div className="max-h-[min(24rem,60vh)] overflow-y-auto">
@@ -197,9 +225,13 @@ export function NotificationBell() {
             ) : notifications.length === 0 ? (
               <div className="flex flex-col items-center px-3.5 py-8 text-center">
                 <BellOff className="size-5 text-ink-faint" aria-hidden="true" />
-                <p className="mt-2 text-[12.5px] text-ink-soft">You&apos;re all caught up.</p>
+                <p className="mt-2 text-[12.5px] text-ink-soft">
+                  {view === "unread" ? "You're all caught up." : "No notifications yet."}
+                </p>
                 <p className="text-[11.5px] text-ink-faint">
-                  Client reviews and approvals will show up here.
+                  {view === "unread"
+                    ? "Read notifications are under All for 30 days."
+                    : "Client reviews and approvals will show up here."}
                 </p>
               </div>
             ) : (

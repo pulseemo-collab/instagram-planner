@@ -45,7 +45,9 @@ test.describe("Locally patched mutations", () => {
     await bell(page).click();
     await panel(page).getByRole("button", { name: "Mark all as read" }).click();
     await expect(page.getByRole("button", { name: "Notifications", exact: true })).toBeVisible();
-    // History is kept — the items are still listed.
+    // The default (unread) list is now empty; history is kept under All.
+    await expect(panel(page)).toContainText("You're all caught up.");
+    await panel(page).getByRole("button", { name: "All", exact: true }).click();
     await expect(panel(page).getByRole("button", { name: /requested changes/ })).toHaveCount(2);
 
     await page.reload();
