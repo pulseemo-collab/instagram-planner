@@ -44,7 +44,8 @@ On Vercel, set the two public variables for **every environment that builds**: P
    - `0001`–`0005`: schema, RLS, storage buckets, content stage, video covers, review notifications.
    - `0006`–`0009`: share-link security, atomic writes, one-transaction client duplication, and timezone-free content days.
    - `0010`: the team workspace with owner approval (see [Team and roles](#team-and-roles)).
-   - Read [`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md) first. Migrations from `0006` on must be deployed **together with the matching app version**; the guide gives the backup, staged Vercel deploy, verification and rollback steps.
+   - `0011`: suspend / restore / remove members (deleting an account moves its clients to the owner), self-resolving sign-up notices, and a 30-day purge of read notifications.
+   - **Deploying a release** ([`docs/DEPLOY_GUIDE.md`](docs/DEPLOY_GUIDE.md)): (1) if there is a migration, run it in the Supabase SQL Editor; (2) `git push origin main` — Vercel auto-deploys. Every migration is backward-compatible with the app in production, so it is always applied *before* the new code goes live.
 3. Check each applied migration with its script in `supabase/verify/`. They are safe on production: everything is rolled back. Rollback scripts live in `supabase/rollback/`, deliberately outside `migrations/`.
 4. In Supabase → Authentication → URL Configuration, set the **Site URL** to your deployment URL, so confirmation emails link back to the app.
 5. Appoint the workspace owner (next section).
@@ -59,10 +60,13 @@ Live mode is **one shared team workspace**: every approved account works on the 
 |---|---|---|---|
 | Clients, posts, calendar, share links | ✓ | ✓ | – |
 | Delete clients | ✓ | – | – |
-| **Team** page: approve / reject sign-ups | ✓ | – | – |
+| **Team** page: approve / reject sign-ups; suspend, restore, remove members | ✓ | – | – |
 | Sees | everything + sign-up notices | everything | only the "waiting for approval" screen |
 
-- **New sign-ups start pending.** The owner gets a notification and approves or rejects them on **Team**. Reject deletes the account (it can sign up again).
+Suspended accounts are like pending ones: they keep their account but see only a "Your access was suspended" screen (RLS blocks all data).
+
+- **New sign-ups start pending.** The owner gets a notification and approves or rejects them on **Team**. Reject deletes the account (it can sign up again). The "waiting for approval" notice disappears for everyone once the account isn't pending any more, including after a change in the Table Editor.
+- **Suspend / Restore / Remove** (owner only, never on the owner): Suspend blocks access but keeps the account; Restore gives it back; Remove deletes the account, and the clients that person created move to the owner. The database refuses to delete the owner's account, or any account while there is no owner, so a delete can never wipe the team's clients.
 - **Roles are changed only in the Supabase dashboard,** never in the app or through the API. The database refuses role/status changes from API requests (privileges plus a guard trigger).
 - **Appoint the owner:** *Table Editor* → `profiles` → the person's row → `role` = `owner` → *Save*. Or in the SQL editor:
   ```sql

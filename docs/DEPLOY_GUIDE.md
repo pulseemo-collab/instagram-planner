@@ -1,15 +1,99 @@
 # Deploy guide
 
-| Release | Migrations | Status |
+## The deploy procedure (every release)
+
+1. **If the release has a migration:** open the Supabase dashboard → **SQL Editor**, paste the migration file, run it. It must finish without an error. Each migration is one transaction: if it fails, nothing was applied and the live app keeps working; fix the cause and run it again.
+2. **`git push origin main`.** Vercel builds and deploys automatically.
+
+That's all. Every migration is written to be **backward-compatible with the app currently in production**, so it is always safe to apply it *before* the new code goes live: new things are added first; old ones are removed or renamed only in a later migration, once no deployed code uses them. No Vercel settings, staged deployments or promotes are needed.
+
+| Release | Migration | Status |
 |---|---|---|
-| **Team workspace + owner approval** (branch `feature/owner-approval`) | `0010_team_workspace.sql` | **Not applied anywhere yet.** This guide's first part |
-| Audit fixes (branch `audit-fixes`, merged) | `0006` → `0009` | Applied in production. Kept [below](#previous-release--migrations-0006--0009-applied) for reference and rollback |
+| **Member actions, shared-previews archive, notification housekeeping** | `0011_member_actions_and_notifications.sql` | **New.** [Release 0011](#release-0011--member-actions-and-notification-housekeeping) below |
+| Team workspace + owner approval | `0010_team_workspace.sql` | Applied in production (owner appointed). Kept [below](#release-0010--team-workspace-with-owner-approval-applied) for reference and rollback |
+| Audit fixes | `0006` → `0009` | Applied in production. Kept [below](#previous-release--migrations-0006--0009-applied) for reference and rollback |
 
 ---
 
-# Release 0010 — team workspace with owner approval
+# Release 0011 — member actions and notification housekeeping
 
-> **This release needs the migration deploy procedure:** Auto-assign off → merge → apply 0010 → Promote (§2). The new app needs 0010, and the old app partly breaks on it, so the two must go live together.
+**How to deploy:** run `supabase/migrations/0011_member_actions_and_notifications.sql` in the SQL Editor, then `git push origin main`.
+
+## What ships
+
+`0011_member_actions_and_notifications.sql`, one transaction:
+
+- **Suspended accounts.** `profiles.status` can be `suspended`: the account is kept but RLS shows it nothing (exactly like pending). Owner-only RPCs `suspend_member`, `restore_member` and `remove_member` never act on the owner or the caller. *Remove* deletes the account from `auth.users`, like *Reject*.
+- **Deleting an account no longer deletes the team's work.** A `BEFORE DELETE` trigger on `profiles` moves the person's clients to the owner and keeps the team's review notifications. This covers *Remove*, *Reject*, and deleting a user in the dashboard (Authentication → Users). It **refuses**:
+  - to delete the **owner**: make another account the owner first (Release 0010, §3);
+  - to delete **anyone while there is no owner**: appoint one first.
+
+  The SQL Editor shows the reason (`Refused: …`); *Authentication → Users* only shows "Database error deleting user".
+- **Removed members' files stay cleanable.** Their ids are kept in `former_members`, so the app's Storage cleanup (exact paths only, once nothing references the file) still works for files used by the clients that moved to the owner. Folders of pending or unknown accounts stay untouchable.
+- **"X is waiting for approval" resolves itself.** A trigger deletes that notice for everyone as soon as the account is no longer pending: approved, rejected, suspended or removed in the app, *or* changed directly in the Table Editor. The migration also deletes all existing stale ones.
+- **Old read notifications are deleted.** A notification older than 30 days that every recipient has read is deleted. The check runs whenever someone marks something read, so no scheduler or extension is needed. The bell's *All* view never shows read ones older than 30 days.
+
+**Delete link** on the Shared previews page needed no migration: the existing `share_links` policy already lets the team delete links.
+
+| File | |
+|---|---|
+| Migration | `supabase/migrations/0011_member_actions_and_notifications.sql` |
+| Verify | `supabase/verify/0011_verify.sql` (safe on production: everything is rolled back) |
+| Rollback | `supabase/rollback/0011_rollback.sql` (outside `migrations/`) |
+
+**Backward-compatible with the 0010 app (checked):** the 0010 app treats every status other than `approved` as pending, so a suspended account just sees the waiting screen, and nothing the 0010 app calls changes signature. The only quirk while the old app is still live: an account suspended from SQL would show on the old Team page under "Waiting for approval".
+
+## Verify (optional)
+
+```bash
+psql "<connection string>" -v ON_ERROR_STOP=1 -f supabase/verify/0011_verify.sql
+```
+
+Or paste it into the SQL Editor. It prints `PASS 1` … `PASS 10` and ends with `ALL 0011 CHECKS PASSED — rolling back, nothing was saved`. Like 0010's script, it creates its own `verify-0011-…@example.invalid` accounts inside a transaction it rolls back, and demotes your real owner only inside that transaction.
+
+| # | Rule checked |
+|---|---|
+| 1 | Sign-up notices disappear once the account isn't pending (direct updates too); pending ones stay |
+| 2 | The owner can't be suspended |
+| 3 | Members can't suspend, restore or remove anyone (RPC or API update) |
+| 4 | Actions refuse the owner/caller and accounts in the wrong state |
+| 5 | A suspended account is kept but reads nothing, creates nothing, and can't restore itself |
+| 6 | Restore gives access back |
+| 7 | Remove deletes the account; their client moves to the owner; review notices and file cleanup are kept |
+| 8 | Deleting the owner, or anyone while there is no owner, is refused |
+| 9 | File cleanup is limited to team folders (approved, suspended, removed); `anon` can't run the new functions |
+| 10 | Fully read notices older than 30 days are purged; newer ones stay; API callers can't run the purge |
+
+`0010_verify.sql` still passes after 0011.
+
+## What changes for users
+
+- **Team page (owner):** *Suspend* / *Restore* and *Remove* on every member except the owner, each with a confirmation. Suspended accounts see "Your access was suspended".
+- **Shared previews:** grouped by client and period, with client and status filters, a collapsed *Archive* per client for disabled and expired links, and *Delete link* (the URL stops working immediately). Owner and members alike.
+- **Notifications:** unread only by default, with an *Unread / All* toggle. Clicking one marks it read and opens it; *Mark all as read* empties the list.
+
+## Roll back
+
+1. Run `supabase/rollback/0011_rollback.sql` in the SQL Editor (one transaction). It restores the exact 0010 state.
+2. Revert the app commits and `git push origin main` (the 0011 app calls functions the rollback drops).
+
+After a rollback: suspended accounts become **pending** again (they still see nothing, and reappear under "Waiting for approval"); deleted notifications don't come back; clients already moved to the owner stay with the owner; and deleting an account cascades its clients again.
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| `Refused: … is the workspace owner …` | Intended. Make another account the owner first (Release 0010, §3), then delete the old one |
+| `Refused: there is no workspace owner …` | Appoint an owner first (Release 0010, §3) |
+| "Database error deleting user" in Authentication → Users | One of the two refusals above. Run `delete from auth.users where email = '…';` in the SQL Editor to see which |
+| `function public.suspend_member(...) does not exist` | 0011 not applied, or stale cache: `notify pgrst, 'reload schema';` |
+| A "waiting for approval" notice that won't go away | 0011 not applied |
+
+---
+
+# Release 0010 — team workspace with owner approval (applied)
+
+> **Applied in production.** The steps below are the historical record of how 0010 shipped: it predates the backward-compatible rule, so it needed a staged deploy. For new releases, use [the deploy procedure](#the-deploy-procedure-every-release) at the top. §3 *Appointing the owner* is still current.
 
 ## What ships
 

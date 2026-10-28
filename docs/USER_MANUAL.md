@@ -63,6 +63,14 @@ the same clients, posts, calendar and share links.
   new accounts (with "email not confirmed" if they haven't confirmed yet) with
   **Approve** and **Reject**; both ask for confirmation. Reject permanently deletes the
   account — the person can sign up again later. **Members** lists everyone approved.
+- **Suspend / Restore / Remove** (owner only; never shown on the owner's own row; each
+  asks for confirmation):
+  - **Suspend** blocks the member right away: they see only *Your access was suspended*
+    and no data, but their account is kept. They move to the **Suspended** section.
+  - **Restore** (in **Suspended**) gives them access again.
+  - **Remove** permanently deletes the account. The clients they created move to you,
+    so none of the team's work is lost; they could sign up again later and would need
+    your approval.
 - **What members can't do:** delete clients and use the Team page. Everything else —
   creating and editing clients, posts, content, share links — is open to every member.
 - **Demo mode** plays the owner, with a sample team (one member and two people waiting).
@@ -108,10 +116,13 @@ scheduled post goes out.
     Press **⌘K** (Mac) or **Ctrl+K** from anywhere, use ↑/↓ and Enter to open a result,
     Escape to clear. On phones, tap the 🔍 button.
   - **Notifications** (the bell) shows client responses from share links — approvals,
-    change requests and comments — for the whole team, with your own unread count; open
-    one to jump to the post, or **Mark all as read** (only for you). The owner also gets
-    a notice for each new account waiting for approval, which opens the Team page. It
-    updates live while the app is open.
+    change requests and comments — for the whole team, with your own unread count.
+    The list shows **unread** notifications; switch to **All** to see the ones you've
+    already read (kept for 30 days, then deleted automatically). Click one to mark it
+    read and jump to its post; **Mark all as read** (only for you) empties the list.
+    The owner also gets a notice for each new account waiting for approval, which opens
+    the Team page; it disappears on its own once that account is approved, rejected,
+    suspended or removed. The bell updates live while the app is open.
 
 ---
 
@@ -448,9 +459,19 @@ their own explanatory page.
 
 ### Managing all links
 
-**Shared previews** (`/previews`) lists every link across clients with status
-(Active / Disabled / Expired), created and expiry dates, comment count, approval
-progress (`3/8 approved`), and the same copy/open/disable/regenerate actions.
+**Shared previews** (`/previews`) lists every link, grouped **by client** (A–Z) and,
+inside each client, by when it was created: **This week**, **This month**, then one
+group per earlier month. Each link shows its status (Active / Disabled / Expired),
+created and expiry dates, comment count, approval progress (`3/8 approved`), and the
+copy / open / disable / regenerate actions.
+
+- **Archive:** disabled and expired links are tucked into a collapsed **Archive (n)**
+  under their client — click it to open.
+- **Filters:** pick a **client** and/or a **status**. Filtering by Disabled or Expired
+  shows those links directly instead of in the archive; **Clear filters** resets both.
+- **Delete link** removes a link for the whole team after a confirmation, and its URL
+  stops working immediately (the client sees *Preview not found*). Comments and
+  approvals it collected stay on the posts. Owner and members can both do this.
 
 ---
 

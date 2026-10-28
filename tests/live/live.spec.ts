@@ -17,7 +17,7 @@ import {
 } from "./helpers";
 
 /*
- * Live mode end to end: the real SupabaseRepository, RLS, the 0006–0010
+ * Live mode end to end: the real SupabaseRepository, RLS, the 0006–0011
  * RPCs and triggers, Storage and Auth — against the LOCAL stack started by
  * `supabase start` in CI. Each test creates its own users and data; since
  * 0010 every approved user shares ONE team workspace, so assertions look
@@ -359,5 +359,135 @@ test.describe("Content days (migration 0009)", () => {
 
     const { data } = await admin().from("posts").select("scheduled_day, scheduled_at").eq("id", content.id).single();
     expect(data).toEqual({ scheduled_day: "2026-08-01", scheduled_at: null });
+  });
+});
+
+test.describe("Member actions + notification housekeeping (migration 0011)", () => {
+  test("suspend blocks everything but keeps the account; restore gives access back", async ({ page, browser }) => {
+    const owner = await ensureOwner();
+    const clientName = `Suspend ${suffix()}`;
+    await seedClient(owner.id, clientName, ["Team post"]);
+    const member = await createUser("suspend", `Sid ${suffix()}`);
+
+    await signIn(page, owner.email);
+    await page.goto("/team");
+    await page.getByRole("button", { name: `Suspend ${member.displayName}` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Suspend" }).click();
+    await expect(page.locator("body")).toContainText(`${member.displayName} was suspended`);
+
+    // RLS, not just the UI: the suspended account's own API calls see nothing.
+    const sb = await signedInClient(member.email);
+    for (const table of ["clients", "posts", "notifications", "share_links"]) {
+      const { data } = await sb.from(table).select("id");
+      expect(data ?? [], `${table} is hidden`).toEqual([]);
+    }
+    const restoreSelf = await sb.rpc("restore_member", { p_user_id: member.id });
+    expect(restoreSelf.error?.message).toBe("not_owner");
+
+    const memberContext = await browser.newContext();
+    const memberPage = await memberContext.newPage();
+    await memberPage.goto("/login");
+    await memberPage.getByLabel("Email").fill(member.email);
+    await memberPage.getByLabel("Password").fill(PASSWORD);
+    await memberPage.getByRole("button", { name: "Sign in" }).click();
+    await expect(memberPage.getByRole("heading", { name: "Your access was suspended" })).toBeVisible({ timeout: 30_000 });
+
+    await page.getByRole("button", { name: `Restore ${member.displayName}` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Restore access" }).click();
+    await expect(page.locator("body")).toContainText(`${member.displayName} can use the workspace again`);
+
+    await memberPage.getByRole("button", { name: "Check again" }).click();
+    await expect(memberPage.getByRole("heading", { name: /Welcome back,/ })).toBeVisible({ timeout: 30_000 });
+    const { data: visible } = await sb.from("clients").select("name").eq("name", clientName);
+    expect(visible).toHaveLength(1);
+    await memberContext.close();
+  });
+
+  test("remove deletes the account, moves their clients to the owner, and their files stay cleanable", async ({ page }) => {
+    const owner = await ensureOwner();
+    const member = await createUser("leaver", `Lee ${suffix()}`);
+    const clientName = `Leaver Client ${suffix()}`;
+    const { clientId, postIds } = await seedClient(member.id, clientName, ["Leaver post"]);
+    const filePath = `${member.id}/team/leaver.png`;
+    const upload = await admin()
+      .storage.from("post-media")
+      .upload(filePath, new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }));
+    expect(upload.error).toBeNull();
+    const publicUrl = admin().storage.from("post-media").getPublicUrl(filePath).data.publicUrl;
+    await insert("post_media", { post_id: postIds[0], url: publicUrl, position: 0 });
+
+    await signIn(page, owner.email);
+    await page.goto("/team");
+    await page.getByRole("button", { name: `Remove ${member.displayName}` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Remove and delete account" }).click();
+    await expect(page.locator("body")).toContainText(`${member.displayName} was removed from the team`);
+
+    const gone = await admin().auth.admin.getUserById(member.id);
+    expect(gone.data.user).toBeNull();
+    const { data: client } = await admin().from("clients").select("owner_id").eq("id", clientId).single();
+    expect(client).toEqual({ owner_id: owner.id });
+    // Still referenced by the moved client: kept.
+    expect(await listUserFiles("post-media", member.id)).toEqual([filePath]);
+
+    // Once nothing references it, the team's cleanup removes exactly that file.
+    await page.goto(`/clients/${clientId}/posts/${postIds[0]}`);
+    await page.getByRole("button", { name: "Delete post" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete post" }).click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${clientId}$`));
+    await expect.poll(() => listUserFiles("post-media", member.id)).toEqual([]);
+  });
+
+  test("the owner's account can't be deleted; members can't use the owner actions", async () => {
+    const owner = await ensureOwner();
+    const refused = await admin().auth.admin.deleteUser(owner.id);
+    expect(refused.error).not.toBeNull();
+    const { data: still } = await admin().from("profiles").select("role").eq("id", owner.id).single();
+    expect(still).toEqual({ role: "owner" });
+
+    const member = await createUser("no-powers");
+    const target = await createUser("target");
+    const sb = await signedInClient(member.email);
+    for (const fn of ["suspend_member", "restore_member", "remove_member"]) {
+      const { error } = await sb.rpc(fn, { p_user_id: target.id });
+      expect(error?.message, fn).toBe("not_owner");
+    }
+    const { data: kept } = await admin().from("profiles").select("status").eq("id", target.id).single();
+    expect(kept).toEqual({ status: "approved" });
+  });
+
+  test("a sign-up notice resolves when the account is approved directly in the database", async () => {
+    const owner = await ensureOwner();
+    const pending = await createUser("dashboard-approve", "Dash Approve", { approved: false });
+    const ownerSb = await signedInClient(owner.email);
+    const notices = () =>
+      ownerSb.from("notifications").select("id").eq("type", "member_signup").eq("subject_user_id", pending.id);
+    expect((await notices()).data).toHaveLength(1);
+
+    // The Table Editor path: a direct update, not the app's approve RPC.
+    const update = await admin().from("profiles").update({ status: "approved" } as never).eq("id", pending.id);
+    expect(update.error).toBeNull();
+    expect((await notices()).data).toEqual([]);
+  });
+
+  test("Delete link on the previews page makes the URL stop working (members too)", async ({ page }) => {
+    const owner = await ensureOwner();
+    const clientName = `Delete Link ${suffix()}`;
+    const { clientId } = await seedClient(owner.id, clientName, ["Shared"]);
+    const { token } = await seedShareLink(clientId);
+    const member = await createUser("link-deleter");
+    expect((await anon().rpc("resolve_share", { share_token: token })).error).toBeNull();
+
+    await signIn(page, member.email);
+    await page.goto("/previews");
+    const section = page.getByRole("region", { name: clientName });
+    await section.getByRole("button", { name: "Delete link" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete link" }).click();
+    await expect(page.locator("body")).toContainText("Link deleted");
+    await expect(section).toHaveCount(0);
+
+    const { error } = await anon().rpc("resolve_share", { share_token: token });
+    expect(error?.message).toBe("not_found");
+    await page.goto(`/share/${token}`);
+    await expect(page.getByText("Preview not found")).toBeVisible();
   });
 });
